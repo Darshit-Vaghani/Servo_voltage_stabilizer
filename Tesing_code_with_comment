@@ -1,0 +1,211 @@
+// ESP32 version of your code (uses interrupts for frequency & phase measurement)
+// Pin mapping (change if needed):
+// V_FREQ_PIN  -> GPIO16 (rising edge from voltage zero crossing detector)
+// I_FREQ_PIN  -> GPIO17 (rising edge from current zero crossing detector)
+// V_ADC_PIN   -> GPIO34 (analog input for voltage measurement)
+// I_ADC_PIN   -> GPIO35 (analog input for current measurement)
+
+#include <Arduino.h>
+
+const int V_FREQ_PIN = 22;
+const int I_FREQ_PIN = 23;
+const int V_ADC_PIN  = 36;
+const int I_ADC_PIN  = 39;
+
+volatile unsigned long lastVmicros = 0;
+volatile unsigned long lastImicros = 0;
+volatile unsigned long periodV = 0;   // microseconds between V rising edges
+volatile unsigned long periodI = 0;   // microseconds between I rising edges
+volatile unsigned long phaseDiffVI = 0; // microseconds from V edge to I edge (signed-ish)
+
+portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+
+double time1, time2;
+
+double voltage_frequncy() {
+  double time =0;
+  time = pulseIn(V_FREQ_PIN,HIGH);
+  time = time *2;
+  time = time/1000000;
+  time = 1/time;
+  Serial.println("Voltage Frequncy = " +(String)time);
+  return time;
+}
+
+float current_frequncy() {
+  double time =0;
+  time = pulseIn(I_FREQ_PIN,HIGH);
+  time = time *2;
+  time = time/1000000;
+  time = 1/time;
+  Serial.println("Current Frequncy = " +(String)time);
+  return (float)time;
+}
+
+
+// ISR: voltage rising edge
+void IRAM_ATTR v_rise() {
+  unsigned long now = micros();
+  portENTER_CRITICAL_ISR(&mux);
+  if (lastVmicros != 0) {
+    periodV = now - lastVmicros;
+  }
+  // compute phase if we have an I timestamp
+  if (lastImicros != 0) {
+    // phase from V to I: positive if I came after V (I - V)
+    phaseDiffVI = (long)lastImicros - (long)now;
+    // keep it simple — store signed difference in microseconds (can be negative)
+  }
+  lastVmicros = now;
+  portEXIT_CRITICAL_ISR(&mux);
+}
+
+// ISR: current rising edge
+void IRAM_ATTR i_rise() {
+  unsigned long now = micros();
+  portENTER_CRITICAL_ISR(&mux);
+  if (lastImicros != 0) {
+    periodI = now - lastImicros;
+  }
+  // compute phase if we have a V timestamp
+  if (lastVmicros != 0) {
+    phaseDiffVI = (long)now - (long)lastVmicros;
+  }
+  lastImicros = now;
+  portEXIT_CRITICAL_ISR(&mux);
+}
+
+// Return frequency from period in microseconds (0 if not available)
+double freq_from_period_us(unsigned long p_us) {
+  if (p_us == 0) return 0.0;
+  return 1000000.0 / (double)p_us;
+}
+
+double voltage_frequency() {
+  unsigned long p;
+  portENTER_CRITICAL(&mux);
+  p = periodV;
+  portEXIT_CRITICAL(&mux);
+  double f = freq_from_period_us(p);
+  Serial.println("Voltage Frequency = " + String(f, 3) + " Hz");
+  return f;
+}
+
+double current_frequency() {
+  unsigned long p;
+  portENTER_CRITICAL(&mux);
+  p = periodI;
+  portEXIT_CRITICAL(&mux);
+  double f = freq_from_period_us(p);
+  Serial.println("Current Frequency = " + String(f, 3) + " Hz");
+  return f;
+}
+
+// Compute PF using phase difference. We use voltage as reference.
+// If phaseDiffVI > 0 => current lags voltage (inductive) ; < 0 => current leads (capacitive)
+
+  float pf() {
+  
+  while(!(digitalRead(V_FREQ_PIN)) == HIGH && digitalRead(I_FREQ_PIN) == HIGH);
+  time1 = micros();
+  while(digitalRead(V_FREQ_PIN) == HIGH && digitalRead(I_FREQ_PIN) == HIGH);
+  time2 = micros();
+  time1 = time2-time1;
+  time1 = time1/1000000.0;
+  float phi = 2.0 * 3.1428 * 50.0 * time1;
+  float power_factor = cos(phi);
+
+    if (power_factor > 1) {
+      power_factor = 1.0;
+    }
+  Serial.println("Power Factor = "+(String)power_factor);
+  return power_factor;
+
+}
+
+float voltage_rms_sample() {
+  // ADC: ESP32 default ADC resolution is 12-bit (0..4095), Vref ~ 3.3V
+  const int samples = 1000;
+  double sumSquares = 0.0;
+  double vAdc;
+  // ensure ADC settings
+  analogReadResolution(12); // 0-4095
+  analogSetPinAttenuation(V_ADC_PIN, ADC_11db); // support ~0-3.3V
+
+  for (int i = 0; i < samples; i++) {
+    int adcValue = analogRead(V_ADC_PIN);
+    vAdc = (adcValue * 3.3) / 4095.0; // convert to volts (0..3.3)
+    //Serial.println(vAdc,3);
+    // your offset used earlier was ~1.676 (for 5V ADC). For ESP32 supply it's ~1.65
+    double acSignal = vAdc - 1.567;        // Remove DC offset (adjust if needed)
+    double actualVoltage = acSignal / 0.000202; // Reverse gain (keep your gain)
+    sumSquares += actualVoltage * actualVoltage;
+    delayMicroseconds(200); // sampling delay (for 50Hz ~ 200us per sample)
+  }
+  double rmsVoltage = sqrt(sumSquares / (double)samples);
+  Serial.print("AC RMS Voltage = ");
+  Serial.print(rmsVoltage, 3);
+  Serial.println(" V");
+  return (float)rmsVoltage;
+}
+
+float current_rms_sample() {
+  const int samples = 1000;
+  double sumSquares = 0.0;
+  double vAdc;
+  analogReadResolution(12);
+  analogSetPinAttenuation(I_ADC_PIN, ADC_11db);
+
+  for (int i = 0; i < samples; i++) {
+    int adcValue = analogRead(I_ADC_PIN);
+    vAdc = (adcValue * 3.3) / 4095.0;
+
+    double vAc = vAdc - 1.57; // remove DC offset (adjust if needed)
+    // keep your CT scaling (you used vAc/33 then *1000)
+    double iSecondary = vAc / 33.0; // as in your code -> Ampere (secondary)
+    double iPrimary = iSecondary * 1000.0; // convert according to CT ratio
+    sumSquares += iPrimary * iPrimary;
+    delayMicroseconds(200);
+  }
+
+  double iRms = sqrt(sumSquares / (double)samples);
+  Serial.print("AC RMS Current = ");
+  Serial.print(iRms, 3);
+  Serial.println(" A");
+  return (float)iRms;
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(100);
+
+  pinMode(V_FREQ_PIN, INPUT_PULLUP); // depends on your zero-cross circuit; change if needed
+  pinMode(I_FREQ_PIN, INPUT_PULLUP);
+
+  // attach interrupts on RISING edges
+  attachInterrupt(digitalPinToInterrupt(V_FREQ_PIN), v_rise, RISING);
+  attachInterrupt(digitalPinToInterrupt(I_FREQ_PIN), i_rise, RISING);
+
+  // ADC pins are input-only on 34,35 so no pinMode() required, but it doesn't hurt:
+  pinMode(V_ADC_PIN, INPUT);
+  pinMode(I_ADC_PIN, INPUT);
+
+  // ADC config
+  analogReadResolution(12);
+  analogSetPinAttenuation(V_ADC_PIN, ADC_11db);
+  analogSetPinAttenuation(I_ADC_PIN, ADC_11db);
+
+  Serial.println("ESP32 measurement started");
+}
+
+void loop() {
+  float v = voltage_rms_sample();
+  float c = current_rms_sample();
+  voltage_frequncy();
+  current_frequncy();
+  float p_f = pf();
+  float power = v * c * p_f;
+  Serial.println("Power = " + String(power, 3));
+  Serial.println("-----------------------------------------------------------------------------");
+  delay(1000);
+}
