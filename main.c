@@ -21,7 +21,7 @@ uint16_t ADCdataAIN;
 float v_out = 0.0;
 float i_rms = 0.0;
 float v_in  = 0.0;
-float error = 0.0;
+int error = 0;
 float ref   = 0.0;
 bit relay_flag = 0;
 int start_flag = 0;
@@ -39,10 +39,10 @@ unsigned char counter_display = 0;
  * ADC CONFIGURATION
  * ===================================================================================*/
 #define ADC_MAX        4095.0
-#define ADC_REF_VOLT   3.3
-#define ADC_OFFSET     1.640
+#define ADC_REF_VOLT   5.00
+#define ADC_OFFSET     1.649
 #define GAIN_FACTOR    0.000202020
-#define SAMPLE_COUNT   202
+#define SAMPLE_COUNT   402
 
 #define CUR_ADC_OFFSET  1.641
 #define BURDEN_GAIN     33.0
@@ -85,7 +85,7 @@ void TM1637_DisplayString(const char *str);
 void TM1637_DisplayCurrent(float current);
 void TM1637_DisplayNumber(unsigned int num);
 
-void Timer1_Init_20ms(void);
+void Timer0_Init_2ms(void);
 
 /* =====================================================================================
  * MICROSECOND DELAY
@@ -129,27 +129,24 @@ float ac_voltage_rms(void)
 
     ref = 0;
      
-	  EA = 0;
+	  //EA = 0;
     for (i = 0; i < SAMPLE_COUNT; i++)
     {
         adc_val = adc_data();
         v_adc   = (adc_val * ADC_REF_VOLT) / ADC_MAX;
 
-        if (v_adc > ref)
-            ref = v_adc;
+        //printf("Vadc = %0.3f\n",v_adc);
+            ref += v_adc;
 
         ac_signal      = v_adc - ADC_OFFSET;
         actual_voltage = ac_signal / GAIN_FACTOR;
-				
-				
-
         sum_squares += actual_voltage * actual_voltage;
     }
-		EA = 1; 
+		//EA = 1; 
 		
     DISABLE_ADC;
 
-    //printf("The ref = %0.3f", ref);
+    //printf("The ref = %0.3f \n", ref/SAMPLE_COUNT);
     ref = 0;
 
     return sqrt(sum_squares / SAMPLE_COUNT);
@@ -165,7 +162,7 @@ float ac_voltage_rms_input(void)
     ENABLE_ADC;
 
     ref = 0;
-     EA = 0;
+     //EA = 0;
     for (i = 0; i < SAMPLE_COUNT; i++)
     {
         adc_val = adc_data();
@@ -179,7 +176,7 @@ float ac_voltage_rms_input(void)
 
         sum_squares += actual_voltage * actual_voltage;
     }
-    EA = 1; 
+    //EA = 1; 
     DISABLE_ADC;
 
     return sqrt(sum_squares / SAMPLE_COUNT);
@@ -347,46 +344,39 @@ void TM1637_DisplayNumber(unsigned int num)
 /* =====================================================================================
  * TIMER-1 (20 ms)
  * ===================================================================================*/
-void Timer1_Init_20ms(void)
+void Timer0_Init_2ms(void)
 {
-    TMOD &= 0x0F;
-    TMOD |= 0x10;
+    TMOD &= 0xF0;      // Clear Timer0 bits
+    TMOD |= 0x01;      // Timer0 Mode 1 (16-bit)
 
-    TH1 = 0x63;
-    TL1 = 0xC0;
+    TH0 = 0xF0;        // Load for 2ms delay
+    TL0 = 0x60;
 
-    TF1 = 0;
-    ET1 = 1;
-    EA  = 1;
-    TR1 = 1;
+    TF0 = 0;           // Clear overflow flag
+    ET0 = 1;           // Enable Timer0 interrupt
+    EA  = 1;           // Enable global interrupts
+    TR0 = 1;           // Start Timer0
 }
 
-void Timer1_Enable(void)
-{
-    TF1 = 0;   // Clear overflow
-    ET1 = 1;   // Enable Timer-1 interrupt
-    TR1 = 1;   // Start timer
-}
 
-void Timer1_Disable(void)
-{
-    ET1 = 0;   // Disable Timer-1 interrupt
-    TR1 = 0;   // Stop timer
-}
 
-void Timer1_ISR(void) interrupt 3
+void Timer0_ISR(void) interrupt 1
 {
-    TF1 = 0;
+    // Reload timer for next 2ms
+    TH0 = 0xF0;
+    TL0 = 0x60;
 
     ms_counter++;
 
-    if (ms_counter >=40)
+    if (ms_counter >= 55)   // 1 × 2ms = 2ms
     {
-			  ++start_flag;
+			printf("ok\n");
+			//printf("ms counter = %d\n",ms_counter);
         ms_counter = 0;
         display_update_flag = 1;
     }
 }
+
 
 /* =====================================================================================
  * MAIN
@@ -394,7 +384,7 @@ void Timer1_ISR(void) interrupt 3
 void main(void)
 {
     MODIFY_HIRC(HIRC_24);
-    //Enable_UART0_VCOM_printf_24M_115200();
+    Enable_UART0_VCOM_printf_24M_115200();
 
     P01_QUASI_MODE;
     P00_QUASI_MODE;
@@ -402,14 +392,20 @@ void main(void)
     P13_PUSHPULL_MODE;
 	  P17_PUSHPULL_MODE;
 
-    Timer1_Init_20ms();
+    Timer0_Init_2ms();
 
     while (1)
     {
-			  
-        v_out = (ac_voltage_rms()- 10);
-        i_rms = ac_current_rms();
-        v_in  = (ac_voltage_rms_input() - 15);
+			 EA=0;
+					  ET0=0;
+					  TR0=0;
+        v_out = (ac_voltage_rms());
+        //i_rms = ac_current_rms();
+        v_in  = (ac_voltage_rms_input());
+			EA=1;
+					  ET0=1;
+					  TR0=0;
+					Timer0_Init_2ms();
 			 
 			 
 			if(v_out < 100 || v_out > 1000) {
@@ -421,23 +417,35 @@ void main(void)
 			 if(i_rms < 0.6) {
 					i_rms = 0;
 				}
+       printf("The voltage is %0.3f \n",v_out);
+        error = (int)(v_out - target);
+				//printf("The error is %d \n",(int)error);
 
-        error = v_out - target;
-
-        if (error > 6)
+        if (error >= 6)
         {
-					//Timer1_Disable();
+					printf("in inc\n");
+					  EA=0;
+					  ET0=0;
+					  TR0=0;
             P12 = 0;
             P13 = 1;
         }
-        else if (error < -6)
+        else if (error <= -6)
         {
+					printf("Enter in dec\n");
+					  EA=0;
+					  ET0=0;
+					  TR0=0;
 					//Timer1_Disable();
             P13 = 0;
             P12 = 1;
         }
         else
         {
+					EA=1;
+					  ET0=1;
+					  TR0=0;
+					Timer0_Init_2ms();
 					  //Timer1_Enable();
             P12 = 0;
             P13 = 0;
@@ -470,13 +478,16 @@ void main(void)
                 case 2: TM1637_DisplayString("OP"); break;
                 case 3: TM1637_DisplayNumber((unsigned int)v_out); break;
                 case 4: TM1637_DisplayString("OA"); break;
-                case 5: TM1637_DisplayCurrent(i_rms); break;
+                case 5: TM1637_DisplayCurrent(0); break;
             }
 
             counter_display++;
             if (counter_display > 5)
                 counter_display = 0;
         }
+				
     }
+		
+		//Timer0_Delay(24000000,300,1000);
 }
 
