@@ -25,6 +25,9 @@ int error = 0;
 float ref   = 0.0;
 bit relay_flag = 0;
 int start_flag = 0;
+bit error_flag =0;
+unsigned int error_count = 0;
+int zc_flag =0;
 
 int target = 230;
 
@@ -120,9 +123,9 @@ int adc_data(void)
 float ac_voltage_rms(void)
 {
 	  
-    unsigned int i;
+    unsigned int i,adc_val;
     float sum_squares = 0.0;
-    float adc_val, v_adc, ac_signal, actual_voltage;
+    float v_adc, ac_signal, actual_voltage;
 
     ENABLE_ADC_AIN4;
     ENABLE_ADC;
@@ -130,6 +133,9 @@ float ac_voltage_rms(void)
     ref = 0;
      
 	  //EA = 0;
+	  zc_flag =0;
+	  while(P15 != 0 && (++zc_flag < 300));
+	  while(P15 == 0 && (++zc_flag < 300));
     for (i = 0; i < SAMPLE_COUNT; i++)
     {
         adc_val = adc_data();
@@ -370,7 +376,7 @@ void Timer0_ISR(void) interrupt 1
 
     if (ms_counter >= 55)   // 1 × 2ms = 2ms
     {
-			printf("ok\n");
+			//printf("---------ok--------\n");
 			//printf("ms counter = %d\n",ms_counter);
         ms_counter = 0;
         display_update_flag = 1;
@@ -391,22 +397,15 @@ void main(void)
     P12_PUSHPULL_MODE;
     P13_PUSHPULL_MODE;
 	  P17_PUSHPULL_MODE;
-
+    P15_INPUT_MODE;
     Timer0_Init_2ms();
 
     while (1)
     {
 			 EA=0;
-					  ET0=0;
-					  TR0=0;
         v_out = (ac_voltage_rms());
         //i_rms = ac_current_rms();
         v_in  = (ac_voltage_rms_input());
-			EA=1;
-					  ET0=1;
-					  TR0=0;
-					Timer0_Init_2ms();
-			 
 			 
 			if(v_out < 100 || v_out > 1000) {
 				v_out = 0;
@@ -417,38 +416,42 @@ void main(void)
 			 if(i_rms < 0.6) {
 					i_rms = 0;
 				}
-       printf("The voltage is %0.3f \n",v_out);
+			 if(error_flag == 0 || error < (-220) || error_count > 1500 ) {
+			 EA=1;
+				 error_count=0;
+			}
+			 else {
+				 ++error_count;
+				 //printf("errro c = %d\n",error_count);
+			 }
+       //printf("The voltage is %0.3f \n",v_out);
         error = (int)(v_out - target);
 				//printf("The error is %d \n",(int)error);
 
         if (error >= 6)
         {
-					printf("in inc\n");
-					  EA=0;
-					  ET0=0;
-					  TR0=0;
+					//printf("in inc\n");
+					  
             P12 = 0;
             P13 = 1;
+					error_flag = 1;
         }
         else if (error <= -6)
         {
-					printf("Enter in dec\n");
-					  EA=0;
-					  ET0=0;
-					  TR0=0;
+					//printf("Enter in dec\n");
 					//Timer1_Disable();
             P13 = 0;
             P12 = 1;
+					error_flag = 1;
         }
         else
         {
-					EA=1;
-					  ET0=1;
-					  TR0=0;
-					Timer0_Init_2ms();
+					
+					
 					  //Timer1_Enable();
             P12 = 0;
             P13 = 0;
+					error_flag = 0;
         }
 				
 				if(v_out > 200  && v_out < 350 && v_in < 280 && v_in > 50 && i_rms < 2 && start_flag > 3) {
