@@ -12,11 +12,12 @@
 #define ADC_OFFSET     1.645
 #define GAIN_FACTOR    0.000202020
 
-#define SAMPLE_COUNT   1000
-#define OSR            16      // Oversampling ratio
+#define SAMPLE_COUNT   1500
+#define OSR            16
 
-#define inc 16
-#define dec 13
+#define inc     16
+#define dec     13
+#define ZC_PIN  32     // Zero-cross input (HIGH in negative cycle)
 
 int target = 230;
 int error = 0;
@@ -73,7 +74,7 @@ void initADCA0(void)
                  ADC_SOC_NUMBER0,
                  ADC_TRIGGER_SW_ONLY,
                  ADC_CH_ADCIN0,
-                 15);      // Correct ACQPS
+                 15);
 
     ADC_setInterruptSource(ADCA_BASE,
                            ADC_INT_NUMBER1,
@@ -92,7 +93,6 @@ uint16_t readADCA0_oversampled(void)
     for(i = 0; i < OSR; i++)
     {
         ADC_forceSOC(ADCA_BASE, ADC_SOC_NUMBER0);
-
         while(!ADC_getInterruptStatus(ADCA_BASE, ADC_INT_NUMBER1));
 
         sum += ADC_readResult(ADCARESULT_BASE, ADC_SOC_NUMBER0);
@@ -102,6 +102,17 @@ uint16_t readADCA0_oversampled(void)
     return (uint16_t)(sum / OSR);
 }
 
+/* -------- Zero Cross Wait -------- */
+
+void waitForZeroCross(void)
+{
+    // Wait until negative cycle
+    while(GPIO_readPin(ZC_PIN) == 0);
+
+    // Wait for zero-cross (falling edge)
+    while(GPIO_readPin(ZC_PIN) == 1);
+}
+
 /* ---------------- RMS ---------------- */
 
 float ac_voltage_rms(void)
@@ -109,11 +120,14 @@ float ac_voltage_rms(void)
     uint16_t adc_val;
     float sum_squares = 0.0;
     float v_adc, ac_signal, actual_voltage;
-     int i;
+
+    // 🔥 Start exactly at zero crossing
+    waitForZeroCross();
+    int i;
     for(i = 0; i < SAMPLE_COUNT; i++)
     {
         adc_val = readADCA0_oversampled();
-        //uartPrintf("adc = %d\n",adc_val);
+
         v_adc = (adc_val * ADC_REF_VOLT) / ADC_MAX;
         ac_signal = v_adc - ADC_OFFSET;
         actual_voltage = ac_signal / GAIN_FACTOR;
@@ -138,15 +152,18 @@ void main(void)
     GPIO_setPadConfig(dec, GPIO_PIN_TYPE_STD);
     GPIO_setDirectionMode(dec, GPIO_DIR_MODE_OUT);
 
+    GPIO_setPadConfig(ZC_PIN, GPIO_PIN_TYPE_STD);
+    GPIO_setDirectionMode(ZC_PIN, GPIO_DIR_MODE_IN);
+
     while(1)
     {
         int v_out = (int)ac_voltage_rms();
 
         if(v_out < 100 || v_out > 1000)
             v_out = 0;
-uartPrintf("v = %d\n",(int)v_out);
-        error = v_out - target;
 
+        error = v_out - target;
+        uartPrintf("vout=%d\n",v_out);
         if(error >= 6)
         {
             GPIO_writePin(inc, 0);
