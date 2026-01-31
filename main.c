@@ -149,7 +149,7 @@ int target = 230;
 volatile bit display_update_flag = 0;
 volatile unsigned int ms_counter = 0, ui = 0,timer_20ms =0,buzer_count=0;
 volatile unsigned int loop_flag = 0;
-unsigned char counter_display = 0;
+unsigned char counter_display = 1;
 
 //-----------------------------------------------------------------------------------
 
@@ -563,8 +563,9 @@ void main(void)
     P03_INPUT_MODE;
 	  P12=1;
 	  P13=1;
-	
+	  P17=0;
 
+	  TM1637_DisplayString("IP");
     Timer0_Init_2ms();
 
     while (1)
