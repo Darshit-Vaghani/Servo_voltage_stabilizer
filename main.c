@@ -20,7 +20,7 @@
 #define INPUT_HIGH  280
 #define INPUT_LOW   150
 #define OVERCURRENT  5
-#define START_TIME_IN_SEC 10
+#define START_TIME_IN_SEC 3
 
 //--------------------------------------------------------------------------------
 
@@ -141,12 +141,13 @@ float ref = 0.0;
 bit relay_flag = 0;
 bit start_flag = 0;
 bit error_flag = 0;
+bit buzer = 0;
 unsigned int error_count = 0;
 int zc_flag = 0, temp = 0;
 unsigned char update_rate = 45, ui_state = ui_normal;
 int target = 230;
 volatile bit display_update_flag = 0;
-volatile unsigned int ms_counter = 0, ui = 0,timer_20ms =0;
+volatile unsigned int ms_counter = 0, ui = 0,timer_20ms =0,buzer_count=0;
 volatile unsigned int loop_flag = 0;
 unsigned char counter_display = 0;
 
@@ -156,14 +157,14 @@ unsigned char counter_display = 0;
 #define ADC_MAX 4095.0
 #define ADC_REF_VOLT 5.00
 //#define ADC_OFFSET 1.649
-#define ADC_OFFSET 2.503
+#define ADC_OFFSET 2.06
 //#define GAIN_FACTOR 0.000202020
 #define GAIN_FACTOR 0.002222
 #define SAMPLE_COUNT 402
 
-#define CUR_ADC_OFFSET 2.503
+#define CUR_ADC_OFFSET 2.10
 #define BURDEN_GAIN 36.0
-#define CURRENT_SAMPLES 200
+#define CURRENT_SAMPLES 202
 
 //------------------------------------------------------------------------------------
 
@@ -275,6 +276,10 @@ float ac_voltage_rms_input(void)
 
     ref = 0;
     // EA = 0;
+	zc_flag = 0;
+    
+	  while(P15 != 0 && (++zc_flag < 300));
+    while(P15 == 0 && (++zc_flag < 300));
     for (i = 0; i < SAMPLE_COUNT; i++)
     {
         adc_val = adc_data();
@@ -301,13 +306,14 @@ float ac_current_rms(void)
 
     ENABLE_ADC_AIN5;
     ENABLE_ADC;
-
+ref =5;
     for (i = 0; i < CURRENT_SAMPLES; i++)
     {
         adc_val = adc_data();
 			//printf("The offset is %0.3f \n",v_adc);
         v_adc = (adc_val * ADC_REF_VOLT) / ADC_MAX;
         
+			
         v_ac = v_adc - CUR_ADC_OFFSET;
 
         i_secondary = v_ac / BURDEN_GAIN;
@@ -319,7 +325,7 @@ float ac_current_rms(void)
     }
 
     DISABLE_ADC;
-
+    //printf("The offset is %0.3f \n",ref);
     return sqrt(sum_squares / CURRENT_SAMPLES);
 }
 
@@ -455,6 +461,29 @@ void TM1637_DisplayNumber(unsigned int num)
 
 //----------------------------------------------------------------------------------
 
+//----------------------Buzer Count-------------------------------------------------
+
+void buzer_on() {
+	
+	 
+	if(buzer_count < 15) {
+		//printf("buzer on \n");
+		buzer = 1;
+	}
+	
+	else {
+		buzer = 0;
+	}
+	++buzer_count;
+	
+	if(buzer_count > 30) {
+		buzer_count = 0;
+	}
+	
+	P16 = buzer;
+}
+
+//----------------------------------------------------------------------------------
 
 //-------------Timer0 Innetrupt At Every 20ms--------------------------------------
 void Timer0_Init_2ms(void)
@@ -502,10 +531,17 @@ void Timer0_ISR(void) interrupt 1
         display_update_flag = 1;
     }
 		++timer_20ms;
-		//printf("time = %d\n",timer_20ms);
+
+		
+		
     if(timer_20ms > (START_TIME_IN_SEC * 50)) {
     start_flag = 1;
-		}			
+			P16=0;
+			//printf("\n buzer off flag 1 \n");
+		}		
+   else if(start_flag == 0) {
+		 buzer_on();
+	 }
 }
 //----------------------------------------------------------------------------------
 
@@ -520,32 +556,34 @@ void main(void)
     P12_PUSHPULL_MODE;
     P13_PUSHPULL_MODE;
     P17_PUSHPULL_MODE;
+	  P16_PUSHPULL_MODE;
     P15_INPUT_MODE;
     P11_INPUT_MODE;
     P10_INPUT_MODE;
     P03_INPUT_MODE;
 	  P12=1;
-	P13=1;
+	  P13=1;
+	
 
     Timer0_Init_2ms();
 
     while (1)
     {
         EA = 0;
-        v_out = (ac_voltage_rms() * 0.8922);
-        i_rms = ac_current_rms();
+        v_out = (ac_voltage_rms() * 0.92);
+        i_rms = (ac_current_rms() - 5.7);
      // v_in  = (ac_voltage_rms_input());
 
         if (error_flag == 0 || error < (-220) || error_count > 1500)
         {
-            v_in = (ac_voltage_rms_input());
+            v_in = (ac_voltage_rms_input() * 0.92);
             EA = 1;
             error_count = 0;
         }
         else
         {
             ++error_count;
-            printf("errro c = %d\n",error_count); //For Error Count print
+            //printf("error = %d\n",error_count); //For Error Count print
         }
         if (v_out < 100 || v_out > 1000)
         {
@@ -559,7 +597,7 @@ void main(void)
         {
             i_rms = 0;
         }
-        printf("The voltage is %0.3f \n", v_out); // For output voltage print
+        //printf("The voltage is %0.3f \n", v_out); // For output voltage print
 				//printf("The current is %0.3f \n",i_rms);
 				
         error = (int)(v_out - target);
@@ -592,12 +630,16 @@ void main(void)
             error_flag = 0;
         }
 
-        if (v_out > OUTPUT_LOW && v_out < OUTPUT_HIGH && v_in < INPUT_HIGH && v_in > INPUT_LOW && i_rms < OVERCURRENT && start_flag==1)
+        //if (v_out > OUTPUT_LOW && v_out < OUTPUT_HIGH && v_in < INPUT_HIGH && v_in > INPUT_LOW && i_rms < OVERCURRENT && start_flag==1)
+				if (start_flag==1)
         {
             relay_flag = 1;
+					//printf("relay On \n");
         }
         else
         {
+					//printf("relay Off \n");
+
             relay_flag = 0;
         }                 
 
