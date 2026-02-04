@@ -12,6 +12,81 @@
 #define DOWN P02
 //--------------------------------------------------------------------------------
 
+//----------flash---------------------------------------------------
+
+#define CONFIG_FLASH_ADDR  0x3800
+#define CONFIG_FLASH_SIZE  0x0800   // 2 KB
+
+
+typedef struct
+{
+    int16_t target_voltage;   // 2 bytes
+    int16_t on_delay;         // 2
+    int16_t input_low;        // 2
+    int16_t input_high;       // 2
+    int16_t output_low;       // 2
+    int16_t output_high;      // 2
+    uint8_t dis;              // 1
+
+    int16_t hlt_delay;        // 2
+
+    uint8_t bur;              // bit (use 0/1)
+    uint8_t regulation;      // 8 bit
+    uint8_t olr;              // bit
+    uint8_t ol1;              // 8 bit
+    uint8_t olt;              // 8 bit
+    uint8_t ol2;              // 8 bit
+
+    float ipc;                // 4
+    float opc;                // 4
+    float oac;                // 4
+
+    uint8_t auto_status;      // bit
+
+    uint16_t crc;             // for data validation
+
+} UI_Config_t;
+
+UI_Config_t config;
+
+uint16_t CalcCRC(uint8_t *buf, uint16_t len)
+{
+    uint16_t crc = 0xA55A;
+    while(len--)
+        crc = (crc << 1) ^ *buf++;
+    return crc;
+}
+
+
+void Save_Config(void)
+{
+    config.crc = CalcCRC((uint8_t*)&config,
+                          sizeof(UI_Config_t)-2);
+
+    Write_DATAFLASH_ARRAY(CONFIG_FLASH_ADDR,
+        (uint8_t*)&config,
+        sizeof(UI_Config_t));
+}
+
+bit Load_Config(void)
+{
+    uint16_t i;
+    uint8_t *p = (uint8_t*)&config;
+
+    for(i=0;i<sizeof(UI_Config_t);i++)
+        p[i] = Read_APROM_BYTE(CONFIG_FLASH_ADDR+i);
+
+    if(config.crc ==
+       CalcCRC((uint8_t*)&config,
+                sizeof(UI_Config_t)-2))
+        return 1;   // valid
+    else
+        return 0;   // corrupted
+}
+
+
+//-------------------------------------------------------------------
+
 //---------------------Protection Configuration-----------------------------------
 
 #define OUTPUT_HIGH 310
@@ -123,6 +198,17 @@ ui_state_t ui_state;
 #define SEG_BLANK 0x00 // space
 #define SEG_DP 0x80    // decimal point
 
+#define SEG_0 0x3F  // 0
+#define SEG_1 0x06  // 1
+#define SEG_2 0x5B  // 2
+#define SEG_3 0x4F  // 3
+#define SEG_4 0x66  // 4
+#define SEG_5 0x6D  // 5
+#define SEG_6 0x7D  // 6
+#define SEG_7 0x07  // 7
+#define SEG_8 0x7F  // 8
+#define SEG_9 0x6F  // 9
+
 const unsigned char segCode[10] =
     {
         0x3F, 0x06, 0x5B, 0x4F, 0x66,
@@ -176,6 +262,12 @@ unsigned char TM1637_CharToSeg(char c)
         return SEG_Y;
     case '-':
         return SEG_DASH;
+		
+		case '0':
+        return SEG_0;
+		
+		case '1':
+        return SEG_1;
 
     case ' ':
         return SEG_BLANK;
@@ -190,9 +282,10 @@ unsigned char TM1637_CharToSeg(char c)
 //------------------------Global Variable Section----------------------------------
 uint16_t ADCdataAIN;
 
-float v_out = 0.0;
+int v_out = 0.0;
 float i_rms = 0.0;
 float v_in = 0.0;
+float output_cal =0.92;
 int error = 0;
 float ref = 0.0;
 bit relay_flag = 0;
@@ -203,9 +296,9 @@ bit setting_press=0;
 unsigned int error_count = 0;
 int zc_flag = 0, temp = 0;
 unsigned char update_rate = 45;
-int target = 230;
+int target=230;
 volatile bit display_update_flag = 0;
-volatile unsigned int ms_counter = 0, ui = 0, timer_20ms = 0, buzer_count = 0;
+volatile unsigned int ms_counter = 0, ui = 0, timer_20ms = 0, buzer_count = 0,trip_count=0;
 volatile unsigned int loop_flag = 0;
 unsigned char counter_display = 1;
 
@@ -246,7 +339,11 @@ void TM1637_DisplayCurrent(float current);
 void TM1637_DisplayNumber(unsigned int num);
 
 void Timer0_Init_2ms(void);
-
+void trip(char n);
+											 
+uint16_t CalcCRC(uint8_t *buf, uint16_t len);
+void Save_Config(void);
+bit  Load_Config(void);
 //--------------------------------------------------------------------------------
 
 //-------------------Delay US Function For Display--------------------------------
@@ -517,6 +614,37 @@ void TM1637_DisplayNumber(unsigned int num)
 
 //----------------------------------------------------------------------------------
 
+//---------------------------------------------------------------------------------------
+
+void trip(char n) {
+	
+	++trip_count;
+	
+	switch(n) {
+		
+		case 1:
+				P17=0;
+				while(SETTING == 0) {
+					TM1637_DisplayString("E-01");
+					P16 = 1;
+					Timer2_Delay(24000000, 11, 500);
+					P16 = 0;
+					if(error < 0) {TM1637_DisplayString("INC");}
+					else {TM1637_DisplayString("DEC");}
+					Timer2_Delay(24000000, 11, 600);
+			}
+				
+			break;
+		
+		
+	}
+	
+	
+}
+
+//---------------------------------------------------------------------------------------
+
+
 //----------------------Buzer Count-------------------------------------------------
 
 void buzer_on()
@@ -623,6 +751,33 @@ void main(void)
     P12 = 1;
     P13 = 1;
     P17 = 0;
+	
+	if(Load_Config() == 0)
+{
+    // first time defaults
+    config.target_voltage = 230;
+    config.on_delay = 5;
+    config.input_low = 180;
+    config.input_high = 260;
+    config.output_low = 190;
+    config.output_high = 250;
+    config.dis = 0;
+    config.hlt_delay = 3;
+    config.bur = 0;
+    config.regulation = 1;
+    config.olr = 1;
+    config.ol1 = 10;
+    config.olt = 5;
+    config.ol2 = 20;
+    config.ipc = 1.0;
+    config.opc = 2.0;
+    config.oac = 0.5;
+    config.auto_status = 1;
+
+    Save_Config();   // store defaults
+}
+target = config.target_voltage;
+
 
     TM1637_DisplayString("IP");
     Timer0_Init_2ms();
@@ -630,12 +785,11 @@ void main(void)
     while (1)
     {
         EA = 0;
-        v_out = (ac_voltage_rms() * 0.92);
+        v_out = (int)(ac_voltage_rms() * output_cal);
         if (v_out < 100 || v_out > 1000)
         {
             v_out = 0;
         }
-
         error = (int)(v_out - target);
 
         if (error >= 3)
@@ -680,10 +834,17 @@ void main(void)
             }
             EA = 1;
             error_count = 0;
+					
         }
+				else if(error_count > 1000) {
+					trip(1);
+					error_count =0;
+				}
         else
         {
+						if(error_count > 200) P16=0;
             ++error_count;
+					
             // printf("error = %d\n",error_count); //For Error Count print
         }
 
@@ -771,6 +932,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											  config.auto_status = 1;
                         ui_state = AUT;
                     }
                     if (UP == 1)
@@ -784,11 +946,13 @@ void main(void)
                         ui_state = AUT_OFF;
                     }
                     break;
+										
                 case AUT_OFF:
                     TM1637_DisplayString("OFF");
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											  config.auto_status = 0;
                         ui_state = AUT;
                     }
                     if (UP == 1)
@@ -837,7 +1001,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-                        temp = 230;
+                        temp = config.target_voltage;
                         ui_state = TARGET_VOLTAGE;
                     }
                     if (UP == 1)
@@ -857,6 +1021,8 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											  config.target_voltage = temp;
+											   target = temp;
                         ui_state = SOP;
                     }
                     break;
@@ -866,7 +1032,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-                        temp = 15;
+                        temp = config.on_delay;
                         ui_state = ON_DELAY_SET;
                     }
                     if (UP == 1)
@@ -886,6 +1052,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											config.on_delay = temp;
                         ui_state = POD;
                     }
                     break;
@@ -895,7 +1062,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-                        temp = 150;
+                        temp = config.input_low;
                         ui_state = INPUT_LOW_SET;
                     }
                     if (UP == 1)
@@ -915,6 +1082,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											config.input_low = temp;
                         ui_state = IPL;
                     }
                     break;
@@ -924,7 +1092,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-                        temp = 290;
+                        temp = config.input_high;
                         ui_state = INPUT_HIGH_SET;
                     }
                     if (UP == 1)
@@ -944,6 +1112,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											config.input_high = temp;
                         ui_state = IN_HIGH;
                     }
                     break;
@@ -953,7 +1122,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-                        temp = 150;
+                        temp = config.output_low;
                         ui_state = OUTPUT_LOW_SET;
                     }
                     if (UP == 1)
@@ -973,6 +1142,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											config.output_low = temp;
                         ui_state = OPL;
                     }
                     break;
@@ -982,7 +1152,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-                        temp = 280;
+                        temp = config.output_high;
                         ui_state = OUTPUT_HIGH_SET;
                     }
                     if (UP == 1)
@@ -1002,6 +1172,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											config.output_high = temp;
                         ui_state = OPH;
                     }
                     break;
@@ -1011,7 +1182,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-                        temp = 5;
+                        temp = config.hlt_delay;
                         ui_state = HLT_DELAY_SET;
                     }
                     if (UP == 1)
@@ -1031,6 +1202,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											config.hlt_delay = temp;
                         ui_state = HLT;
                     }
                     break;
@@ -1060,7 +1232,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-                        temp = 5;
+                        config.dis = 1;
                         ui_state = DIS;
                     }
                     if (UP == 1)
@@ -1080,7 +1252,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-                        temp = 5;
+                        config.dis = 2;
                         ui_state = DIS;
                     }
                     if (UP == 1)
@@ -1100,7 +1272,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-                        temp = 5;
+                        config.dis = 3;
                         ui_state = DIS;
                     }
                     if (UP == 1)
@@ -1120,7 +1292,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-                        temp = 5;
+                       config.dis = 4;
                         ui_state = DIS;
                     }
                     if (UP == 1)
@@ -1158,6 +1330,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											  config.bur = 1;
                         ui_state = BUR;
                     }
                     if (UP == 1)
@@ -1176,6 +1349,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											config.bur = 0;
                         ui_state = BUR;
                     }
                     if (UP == 1)
@@ -1224,7 +1398,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-                        temp = 5;
+                        temp = config.regulation;
                         ui_state = REGULATION_SET;
                     }
                     if (UP == 1)
@@ -1244,6 +1418,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											  config.regulation = temp;
                         ui_state = REG;
                     }
                     break;
@@ -1271,6 +1446,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											config.olr = 1;
                         ui_state = OLR;
                     }
                     if (UP == 1)
@@ -1289,6 +1465,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											config.olr = 0;
                         ui_state = OLR;
                     }
                     if (UP == 1)
@@ -1308,7 +1485,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-                        temp = 13;
+                        temp = config.ol1;
                         ui_state = OL1_SET;
                     }
                     if (UP == 1)
@@ -1328,6 +1505,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											config.ol1 = temp;
                         ui_state = OL1;
                     }
                     break;
@@ -1337,7 +1515,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-                        temp = 5;
+                        temp = config.olt;
                         ui_state = OLT_SET;
                     }
                     if (UP == 1)
@@ -1357,6 +1535,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											config.olt = temp;
                         ui_state = OLT;
                     }
                     break;
@@ -1366,7 +1545,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-                        temp = 5;
+                        temp = config.ol2;
                         ui_state = OL2_SET;
                     }
                     if (UP == 1)
@@ -1386,6 +1565,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											config.ol2 = temp;
                         ui_state = OL2;
                     }
                     break;
@@ -1395,7 +1575,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-                        temp = 5;
+                        temp = 235;
                         ui_state = IPC_SET;
                     }
                     if (UP == 1)
@@ -1415,6 +1595,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											config.ipc = (float)(temp / v_in);
                         ui_state = IPC;
                     }
                     break;
@@ -1424,7 +1605,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-                        temp = 5;
+                        temp = 230;
                         ui_state = OPC_SET;
                     }
                     if (UP == 1)
@@ -1444,6 +1625,8 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											config.opc = (((float)temp * 0.92)/ (float)v_out);
+											output_cal = config.opc;
                         ui_state = OPC;
                     }
                     break;
@@ -1473,6 +1656,7 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
+											config.oac = (float)(temp / i_rms);
                         ui_state = OAC;
                     }
                     break;
@@ -1482,7 +1666,8 @@ void main(void)
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-											 setting_press = 0;
+											  setting_press = 0;
+											  Save_Config();
                         ui_state = UI_NORMAL;
                         update_rate = 55;
                     }
