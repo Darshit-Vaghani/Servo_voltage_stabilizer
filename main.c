@@ -1,7 +1,7 @@
 //---------Header File Section-------------------------------------------
 #include "numicro_8051.h"
 #include <intrins.h>
-#include <math.h>
+
 //----------------------------------------------------------------------------
 
 //----------------------------Pin Defination-------------------------------------
@@ -14,8 +14,8 @@
 
 //----------flash---------------------------------------------------
 
-#define CONFIG_FLASH_ADDR  0x3800
-#define CONFIG_FLASH_SIZE  0x0800   // 2 KB
+#define CONFIG_FLASH_ADDR  0x3C00
+#define CONFIG_FLASH_SIZE  1   // 2 KB
 
 
 typedef struct
@@ -89,12 +89,8 @@ bit Load_Config(void)
 
 //---------------------Protection Configuration-----------------------------------
 
-#define OUTPUT_HIGH 310
-#define OUTPUT_LOW 150
-#define INPUT_HIGH 280
-#define INPUT_LOW 150
-#define OVERCURRENT 5
-#define START_TIME_IN_SEC 3
+
+#define START_TIME_IN_SEC 1      //at 1 12sec   50 count
 
 //--------------------------------------------------------------------------------
 
@@ -251,7 +247,7 @@ unsigned char TM1637_CharToSeg(char c)
     case 'R':
         return SEG_R;
     case 'S':
-        return SEG_S;
+        return SEG_S; 
     case 'U':
         return SEG_U;
 		case 'T':
@@ -285,22 +281,23 @@ uint16_t ADCdataAIN;
 int v_out = 0.0;
 float i_rms = 0.0;
 float v_in = 0.0;
-float output_cal =0.92;
+float output_cal =0.92,input_cal=0.92,current_cal=1;
 int error = 0;
 float ref = 0.0;
 bit relay_flag = 0;
 bit start_flag = 0;
-bit error_flag = 0;
+bit error_flag = 0,aut=1;
 bit buzer = 0;
 bit setting_press=0;
-unsigned int error_count = 0;
+unsigned int error_count = 0,out_high=270,out_low=210,in_high=270,in_low=150,ol1=3,ol2=5,hlt=5,olt=120;
 int zc_flag = 0, temp = 0;
 unsigned char update_rate = 45;
 int target=230;
 volatile bit display_update_flag = 0;
 volatile unsigned int ms_counter = 0, ui = 0, timer_20ms = 0, buzer_count = 0,trip_count=0;
 volatile unsigned int loop_flag = 0;
-unsigned char counter_display = 1;
+volatile char band_inc = 3,band_dec= -3;
+unsigned char counter_display = 1,dis_start=0,dis_end=5;
 
 //-----------------------------------------------------------------------------------
 
@@ -343,7 +340,9 @@ void trip(char n);
 											 
 uint16_t CalcCRC(uint8_t *buf, uint16_t len);
 void Save_Config(void);
-bit  Load_Config(void);
+bit Load_Config(void);
+unsigned long isqrt32(unsigned long x);
+void buzer_on();
 //--------------------------------------------------------------------------------
 
 //-------------------Delay US Function For Display--------------------------------
@@ -374,6 +373,33 @@ int adc_data(void)
     return ADCdataAIN;
 }
 //----------------------------------------------------------------------------------
+
+// 32-bit integer square root for C51
+unsigned long isqrt32(unsigned long x)
+{
+    unsigned long res = 0;
+    unsigned long mask = 0x40000000UL;  // renamed
+
+    while (mask > x)
+        mask >>= 2;
+
+    while (mask != 0)
+    {
+        if (x >= res + mask)
+        {
+            x -= res + mask;
+            res = (res >> 1) + mask;
+        }
+        else
+        {
+            res >>= 1;
+        }
+        mask >>= 2;
+    }
+    return res;
+}
+
+
 
 //--------------------OUTPUT Voltage Measurment With Float Return-------------------
 float ac_voltage_rms(void)
@@ -412,7 +438,8 @@ float ac_voltage_rms(void)
     // printf("The ref = %0.3f \n", ref/SAMPLE_COUNT); //For Know Refrence Voltage
     ref = 0;
 
-    return sqrt(sum_squares / SAMPLE_COUNT);
+		 return isqrt32(sum_squares / SAMPLE_COUNT);
+    //return sqrt(sum_squares / SAMPLE_COUNT);
 }
 //----------------------------------------------------------------------------------
 
@@ -445,8 +472,9 @@ float ac_voltage_rms_input(void)
     }
     // EA = 1;
     DISABLE_ADC;
-
-    return sqrt(sum_squares / SAMPLE_COUNT);
+    
+		 return isqrt32(sum_squares / SAMPLE_COUNT);
+    //return sqrt(sum_squares / SAMPLE_COUNT);
 }
 
 //---------------------------------------------------------------------------------
@@ -479,7 +507,8 @@ float ac_current_rms(void)
 
     DISABLE_ADC;
     // printf("The offset is %0.3f \n",ref);
-    return sqrt(sum_squares / CURRENT_SAMPLES);
+		 return isqrt32(sum_squares / CURRENT_SAMPLES);
+    //return sqrt(sum_squares / CURRENT_SAMPLES);
 }
 
 //----------------------------------------------------------------------------------
@@ -633,17 +662,59 @@ void trip(char n) {
 					else {TM1637_DisplayString("DEC");}
 					Timer2_Delay(24000000, 11, 600);
 			}
-				
 			break;
-		
-		
+			
+		case 2:
+			
+			if(trip_count > hlt) {  // 40 9sec
+				relay_flag = 0;
+			}
+			else {
+				buzer_on();
+			}	
+break;
+
+case 3:
+			
+			if(trip_count > olt) {
+				P17 = 0;
+				P16=0;
+				while(SETTING != 1) {
+				TM1637_DisplayString("OL");
+				}
+			}
+			else {
+				buzer_on();
+			}	
+break;			
 	}
-	
-	
 }
 
 //---------------------------------------------------------------------------------------
 
+void set_dis() {
+	switch(config.dis) {
+	
+	
+	case 1:
+		dis_start=0;
+	  dis_end = 1;
+		break;
+	case 2:
+		dis_start=2;
+	  dis_end = 3;
+		break;
+	case 3:
+		dis_start=4;
+	  dis_end = 5;
+		break;
+	case 4:
+		dis_start=0;
+	  dis_end = 5;
+		break;
+	
+}
+}
 
 //----------------------Buzer Count-------------------------------------------------
 
@@ -730,6 +801,32 @@ void Timer0_ISR(void) interrupt 1
         buzer_on();
     }
 }
+
+//------------------------update----------------------
+
+void set_parameter() {
+
+	target = config.target_voltage;
+  set_dis();
+  in_high=config.input_high;
+	in_low=config.input_low;
+	out_high=config.output_high;
+	out_low=config.output_low;
+	hlt = (int)(config.hlt_delay * 4.44);
+	band_inc = config.regulation;
+	band_dec = config.regulation * (-1);
+	ol1 = config.ol1;
+	ol2 = config.ol1 + 3;
+	olt = (int)(config.olt*4.44);
+  //input_cal = config.ipc;
+	//output_cal = config.opc;
+	//current_cal = config.oac;
+}
+
+
+//---------------------------------------------------
+
+
 //----------------------------------------------------------------------------------
 
 void main(void)
@@ -759,16 +856,16 @@ void main(void)
     config.on_delay = 5;
     config.input_low = 180;
     config.input_high = 260;
-    config.output_low = 190;
-    config.output_high = 250;
-    config.dis = 0;
+    config.output_low = 210;
+    config.output_high = 270;
+    config.dis = 4;
     config.hlt_delay = 3;
     config.bur = 0;
-    config.regulation = 1;
+    config.regulation = 3;
     config.olr = 1;
     config.ol1 = 10;
     config.olt = 5;
-    config.ol2 = 20;
+    config.ol2 = 13;
     config.ipc = 1.0;
     config.opc = 2.0;
     config.oac = 0.5;
@@ -776,8 +873,8 @@ void main(void)
 
     Save_Config();   // store defaults
 }
-target = config.target_voltage;
-
+   
+set_parameter();
 
     TM1637_DisplayString("IP");
     Timer0_Init_2ms();
@@ -792,7 +889,7 @@ target = config.target_voltage;
         }
         error = (int)(v_out - target);
 
-        if (error >= 3)
+        if (error >= band_inc && aut)
         {
             // printf("in inc\n");
             // P12 = 0;
@@ -801,7 +898,7 @@ target = config.target_voltage;
             P13 = 0;
             error_flag = 1;
         }
-        else if (error <= -3)
+        else if (error <= band_dec && aut)
         {
             // printf("Enter in dec\n");
             // P13 = 0;
@@ -810,7 +907,7 @@ target = config.target_voltage;
             P12 = 0;
             error_flag = 1;
         }
-        else
+        else if(aut == 1)
         {
             // P12 = 0;
             // P13 = 0;
@@ -822,8 +919,8 @@ target = config.target_voltage;
 
         if (error_flag == 0 || error < (-220) || error_count > 1500)
         {
-            v_in = (ac_voltage_rms_input() * 0.92);
-            i_rms = (ac_current_rms() - 5.7);
+            v_in = (ac_voltage_rms_input() * input_cal);
+            i_rms = (ac_current_rms() - 5.4) * current_cal;
             if (v_in < 100 || v_in > 1000)
             {
                 v_in = 0;
@@ -832,6 +929,7 @@ target = config.target_voltage;
             {
                 i_rms = 0;
             }
+						//printf("The current is %d \n",i_rms); 
             EA = 1;
             error_count = 0;
 					
@@ -857,6 +955,7 @@ target = config.target_voltage;
         if (start_flag == 1)
         {
             relay_flag = 1;
+					
             // printf("relay On \n");
         }
         else
@@ -866,8 +965,51 @@ target = config.target_voltage;
             relay_flag = 0;
         }
 
-        P17 = relay_flag;
-
+       //-----------------------manual------------
+				
+				if(aut==0 && ui_state == UI_NORMAL) {
+					
+					if(UP == 1) {
+						P13 = 1;
+            P12 = 0;
+					}
+					
+					else if(DOWN == 1) {
+						P12 = 1;
+            P13 = 0;
+					}
+					
+					else {
+						P12 = 1;
+            P13 = 1;
+					}
+				}
+				
+				
+				//------------------------------------
+				
+				
+				
+				
+				if(v_out > out_high || v_out < out_low) {
+				
+          	trip(2);			
+				}
+				else if(v_in > in_high || v_in < in_low) {
+				trip(2);		
+				}
+				else if(i_rms > ol1) {
+					trip(3);
+				}
+				else if(start_flag == 1) {
+				trip_count=0;
+					relay_flag = 1;
+				}
+				else {
+				trip_count=0;	
+				}
+ P17 = relay_flag;
+				
         if (display_update_flag)
         {
             display_update_flag = 0;
@@ -897,8 +1039,10 @@ target = config.target_voltage;
                 }
 
                 counter_display++;
-                if (counter_display > 5)
-                    counter_display = 0;
+                if (counter_display > dis_end) {
+                    counter_display = dis_start;
+								}
+								
             }
             else
             {
@@ -933,6 +1077,7 @@ target = config.target_voltage;
                     {
                         Timer2_Delay(24000000, 1, 100);
 											  config.auto_status = 1;
+											aut=1;
                         ui_state = AUT;
                     }
                     if (UP == 1)
@@ -953,6 +1098,7 @@ target = config.target_voltage;
                     {
                         Timer2_Delay(24000000, 1, 100);
 											  config.auto_status = 0;
+											aut=0;
                         ui_state = AUT;
                     }
                     if (UP == 1)
@@ -1083,6 +1229,7 @@ target = config.target_voltage;
                     {
                         Timer2_Delay(24000000, 1, 100);
 											config.input_low = temp;
+											in_low = temp;
                         ui_state = IPL;
                     }
                     break;
@@ -1093,6 +1240,7 @@ target = config.target_voltage;
                     {
                         Timer2_Delay(24000000, 1, 100);
                         temp = config.input_high;
+										 	   
                         ui_state = INPUT_HIGH_SET;
                     }
                     if (UP == 1)
@@ -1113,6 +1261,7 @@ target = config.target_voltage;
                     {
                         Timer2_Delay(24000000, 1, 100);
 											config.input_high = temp;
+											in_high = temp;
                         ui_state = IN_HIGH;
                     }
                     break;
@@ -1143,6 +1292,7 @@ target = config.target_voltage;
                     {
                         Timer2_Delay(24000000, 1, 100);
 											config.output_low = temp;
+											out_low = temp;
                         ui_state = OPL;
                     }
                     break;
@@ -1173,6 +1323,7 @@ target = config.target_voltage;
                     {
                         Timer2_Delay(24000000, 1, 100);
 											config.output_high = temp;
+											out_high = temp;
                         ui_state = OPH;
                     }
                     break;
@@ -1203,6 +1354,7 @@ target = config.target_voltage;
                     {
                         Timer2_Delay(24000000, 1, 100);
 											config.hlt_delay = temp;
+											hlt = (int)(temp * 4.44);
                         ui_state = HLT;
                     }
                     break;
@@ -1233,6 +1385,7 @@ target = config.target_voltage;
                     {
                         Timer2_Delay(24000000, 1, 100);
                         config.dis = 1;
+											  set_dis();
                         ui_state = DIS;
                     }
                     if (UP == 1)
@@ -1253,6 +1406,7 @@ target = config.target_voltage;
                     {
                         Timer2_Delay(24000000, 1, 100);
                         config.dis = 2;
+											set_dis();
                         ui_state = DIS;
                     }
                     if (UP == 1)
@@ -1273,6 +1427,7 @@ target = config.target_voltage;
                     {
                         Timer2_Delay(24000000, 1, 100);
                         config.dis = 3;
+											  set_dis();
                         ui_state = DIS;
                     }
                     if (UP == 1)
@@ -1293,6 +1448,7 @@ target = config.target_voltage;
                     {
                         Timer2_Delay(24000000, 1, 100);
                        config.dis = 4;
+											set_dis();
                         ui_state = DIS;
                     }
                     if (UP == 1)
@@ -1418,7 +1574,9 @@ target = config.target_voltage;
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-											  config.regulation = temp;
+                       config.regulation = temp;
+                       band_inc = temp;
+                       band_dec = (-1)*temp;
                         ui_state = REG;
                     }
                     break;
@@ -1506,6 +1664,7 @@ target = config.target_voltage;
                     {
                         Timer2_Delay(24000000, 1, 100);
 											config.ol1 = temp;
+											config.ol2 = temp + 3;
                         ui_state = OL1;
                     }
                     break;
@@ -1566,6 +1725,7 @@ target = config.target_voltage;
                     {
                         Timer2_Delay(24000000, 1, 100);
 											config.ol2 = temp;
+											ol2 = temp;
                         ui_state = OL2;
                     }
                     break;
@@ -1595,7 +1755,8 @@ target = config.target_voltage;
                     if (SETTING == 1)
                     {
                         Timer2_Delay(24000000, 1, 100);
-											config.ipc = (float)(temp / v_in);
+											config.ipc = (((float)temp)/v_in);
+											//input_cal = config.ipc;
                         ui_state = IPC;
                     }
                     break;
@@ -1626,7 +1787,7 @@ target = config.target_voltage;
                     {
                         Timer2_Delay(24000000, 1, 100);
 											config.opc = (((float)temp * 0.92)/ (float)v_out);
-											output_cal = config.opc;
+											//output_cal = config.opc;
                         ui_state = OPC;
                     }
                     break;
@@ -1648,7 +1809,7 @@ target = config.target_voltage;
                     {
                         Timer2_Delay(24000000, 1, 100);
                         ui_state = OPC;
-                    }
+                    }  ,mnbnbmmn,,mbn,bm,nmbn,bmn,mbn,mbbbbbbbbbbbbbbbbbbbbbbb,n
                     break;
 
                 case OAC_SET:
@@ -1657,6 +1818,7 @@ target = config.target_voltage;
                     {
                         Timer2_Delay(24000000, 1, 100);
 											config.oac = (float)(temp / i_rms);
+											//current_cal = config.oac;
                         ui_state = OAC;
                     }
                     break;
@@ -1669,7 +1831,7 @@ target = config.target_voltage;
 											  setting_press = 0;
 											  Save_Config();
                         ui_state = UI_NORMAL;
-                        update_rate = 55;
+                                                    tn uyjmntmntguyhn mntt ntt nt tn tmnuy tnuy7 tnuyn7 tnuyn7        uyn = 55;
                     }
                     if (UP == 1)
                     {
