@@ -14,8 +14,8 @@
 
 //----------flash---------------------------------------------------
 
-//#define CONFIG_FLASH_ADDR 0x3C00
-#define CONFIG_FLASH_ADDR  0x3CCD   // exact 15.2 KB 15565
+#define CONFIG_FLASH_ADDR 0x3E00   // 15872
+//#define CONFIG_FLASH_ADDR  0x3CCD   // exact 15.2 KB 15565
 //#define CONFIG_FLASH_SIZE 1 // 0.5 KB
 
 typedef struct
@@ -286,12 +286,12 @@ int v_in = 0,v_in_raw=0;
 float output_cal = 0.92, input_cal = 0.92, current_cal = 1;
 int error = 0;
 float ref = 0.0;
-bit relay_flag = 0,error_code=0;
+bit relay_flag = 0,error_code=0,i_low=0,i_high=0,trip_flag=0;
 bit start_flag = 0;
 bit error_flag = 0, aut = 1;
 bit buzer = 0;
 bit setting_press = 0;
-unsigned int error_count = 0,disp_update_error=0, out_high = 270, out_low = 210, in_high = 270, in_low = 150, ol1 = 3, ol2 = 5, hlt = 5, olt = 120,pod_delay=41;
+unsigned int error_count = 0,delay_temp=0,disp_update_error=0, out_high = 270, out_low = 210, in_high = 260, in_low = 180, ol1 = 3, ol2 = 5, hlt = 5, olt = 120,pod_delay=41;
 int zc_flag = 0, temp = 0;
 unsigned char update_rate = 20;
 int target = 230;
@@ -442,6 +442,8 @@ float ac_voltage_rms(void)
     // return sqrt(sum_squares / SAMPLE_COUNT);
 }
 //----------------------------------------------------------------------------------
+
+
 
 //-------------------------Input Voltage Measurment---------------------------------
 float ac_voltage_rms_input(void)
@@ -694,7 +696,10 @@ void trip(char n)
 				 }
         if (trip_count > hlt)
         { // 40 9sec
+					  i_high = 1;
             relay_flag = 0;
+					  P16=0;
+				
         }
         else
         {
@@ -711,19 +716,33 @@ void trip(char n)
             P16 = 0;
 				    P13 = 1;
 		        P12 = 1;
-				    EA = 0;
-            while (UP != 1)
+				    //EA = 0;
+					  delay_temp = 0;
+					  trip_flag = 1;
+            while (UP != 1 && delay_temp < 130)
             {
                 TM1637_DisplayString("OL-1");
+							  
+						
+							 timer_20ms = 0;
+							while( timer_20ms < 100 ) {
+							P16 =1;
+							}
+							  timer_20ms = 0;
+							while( timer_20ms < 100 ) {
+							P16 =0;
+							}
+                ++delay_temp;
             }
 						
 						start_flag = 0;
 				    timer_20ms = 0;
 						i_rms = 0;
+						P16=0;
 						relay_flag = 0;
 						counter_display=1;
 						TM1637_DisplayString("IP");
-				    EA = 1;
+				    //EA = 1;
         }
         else
         {
@@ -745,12 +764,16 @@ void trip(char n)
 				 }
         if (trip_count > hlt)
         { // 40 9sec
+					  i_low = 1;
             relay_flag = 0;
+					  P16=0;
+				
         }
         else
         {
             buzer_on();
         }
+        break;
         break;
 				
 				case 5:
@@ -767,6 +790,7 @@ void trip(char n)
 				 }
         if (trip_count > hlt)
         { // 40 9sec
+					  P16=0;
             relay_flag = 0;
         }
         else
@@ -790,6 +814,7 @@ void trip(char n)
 				 }
         if (trip_count > hlt)
         { // 40 9sec
+					  P16=0;
             relay_flag = 0;
         }
         else
@@ -804,10 +829,22 @@ void trip(char n)
             P16 = 0;
 				    P13 = 1;
 		        P12 = 1;
-				    EA = 0;
-            while (UP != 1)
+				   // EA = 0;
+				  delay_temp = 0;
+            while (UP != 1 && delay_temp < 130)
             {
                 TM1637_DisplayString("OL-2");
+							  
+						
+							 timer_20ms = 0;
+							while( timer_20ms < 100 ) {
+							P16 =1;
+							}
+							  timer_20ms = 0;
+							while( timer_20ms < 100 ) {
+							P16 =0;
+							}
+                ++delay_temp;
             }
 						start_flag = 0;
 				    timer_20ms = 0;
@@ -815,7 +852,7 @@ void trip(char n)
 						relay_flag = 0;
 						counter_display=1;
 						TM1637_DisplayString("IP");
-				    EA = 1;
+				    //EA = 1;
         break;
 					
     }
@@ -923,8 +960,11 @@ void Timer0_ISR(void) interrupt 1
 
     if (timer_20ms > pod_delay)
     {
-        start_flag = 1;
-        P16 = 0;
+			   if(start_flag == 0) {
+				 start_flag = 1;
+					P16=0;
+				 }     	
+       
         // printf("\n buzer off flag 1 \n");
     }
     else if (start_flag == 0)
@@ -985,7 +1025,7 @@ void main(void)
         // first time defaults
         config.target_voltage = 230;
         config.on_delay = 10;
-        config.input_low = 180;
+        config.input_low = 190;
         config.input_high = 270;
         config.output_low = 210;
         config.output_high = 270;
@@ -1043,19 +1083,24 @@ void main(void)
         {
             v_in = (int)(ac_voltage_rms_input() * input_cal);
             i_rms = (ac_current_rms() - 5.4) * current_cal;
+					
+					if(i_rms < 2.5) {
+					i_rms += 1;
+					}
             if (v_in < 100 || v_in > 1000)
             {
                 v_in = 0;
             }
-            if (i_rms < 0.6)
+            if (i_rms < 0.7)
             {
                 i_rms = 0;
             }
             EA = 1;
 
-            if (error_count > 80)
+						
+            if (error_count > 110 && v_in < (in_high+15) && v_in > (in_low+5))
             {
-                trip(1);
+                //trip(1);
                 error_count = 0;
             }
 
@@ -1081,14 +1126,7 @@ void main(void)
         // printf("The current is %0.3f \n",i_rms);
         // printf("The error is %d \n",(int)error); //For Error Print
         // if (v_out > OUTPUT_LOW && v_out < OUTPUT_HIGH && v_in < INPUT_HIGH && v_in > INPUT_LOW && i_rms < OVERCURRENT && start_flag==1)
-        if (start_flag == 1)
-        {
-            relay_flag = 1;
-        }
-        else
-        {
-            relay_flag = 0;
-        }
+				
 
         //-----------------------manual------------
 
@@ -1125,14 +1163,14 @@ void main(void)
 					error_code = 1;
 				 trip(5);
 				}
-        else if (v_in > in_high)
+        else if (v_in > in_high && i_high == 0)
         {
 					error_code = 1;
             trip(2);
         }
-				else if(v_in < in_low) {
+				else if(v_in < in_low && i_low == 0) {
 					error_code = 1;
-				trip(4);
+				   trip(4);
 				}
         else if (i_rms > ol1)
         {
@@ -1144,14 +1182,33 @@ void main(void)
         else if (start_flag == 1)
         {
             trip_count = 0;
-            relay_flag = 1;
 					  error_code = 0;
-        }
+					
+					  if(i_high == 1) {
+							
+							if(v_in < (in_high - 20)) {
+									relay_flag = 1;
+								  i_high = 0;
+							}
+						}
+							
+							else if(i_low == 1) {
+							if(v_in > (in_low + 25)) {
+									relay_flag = 1;
+								  i_low = 0;
+							}
+						}
+							else {
+							relay_flag = 1;
+							}
+						}
+					 
         else
         {
 					  error_code = 0;
             trip_count = 0;
         }
+				
         P17 = relay_flag;
 
         if (display_update_flag)
@@ -1968,7 +2025,7 @@ void main(void)
                     {
                         Timer2_Delay(24000000, 1, 100);
                         config.oac = (float)(temp / i_rms);
-                        // current_cal = config.oac;
+                        current_cal = config.oac;
                         ui_state = OAC;
                     }
                     break;
