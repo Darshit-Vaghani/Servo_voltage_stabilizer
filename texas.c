@@ -4,20 +4,21 @@
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include "LiquidCrystal_F28E12x.h"
 
 /* ---------------- CONFIG ---------------- */
 
 #define ADC_MAX 4095.0
 #define ADC_REF_VOLT 3.3
-#define ADC_OFFSET 1.645
-#define GAIN_FACTOR 0.000202020
+#define ADC_OFFSET 2.08
+#define GAIN_FACTOR 0.002222
 
-#define SAMPLE_COUNT 1500
-#define OSR 16
+#define SAMPLE_COUNT 369    //738 2 cycle
+#define OSR 7
 
 #define inc 16
 #define dec 13
-#define ZC_PIN 32 // Zero-cross input (HIGH in negative cycle)
+#define ZC_PIN 6 // Zero-cross input (HIGH in negative cycle)
 
 int target = 230;
 int error = 0;
@@ -95,15 +96,31 @@ uint16_t readADCA0_oversampled(void) {
 
 /* -------- Zero Cross Wait -------- */
 
-void waitForZeroCross(void) {
-  // Wait until negative cycle
-  while (GPIO_readPin(ZC_PIN) == 0)
-    ;
+#define ZC_TIMEOUT 5000   // adjust based on CPU speed
 
-  // Wait for zero-cross (falling edge)
-  while (GPIO_readPin(ZC_PIN) == 1)
-    ;
+int waitForZeroCross(void)
+{
+    uint32_t timeout = 0;
+
+    // Wait for HIGH (negative half cycle)
+    while (GPIO_readPin(ZC_PIN) == 0)
+    {
+        if (++timeout > ZC_TIMEOUT)
+            return 0;   // No signal
+    }
+
+    timeout = 0;
+
+    // Wait for falling edge
+    while (GPIO_readPin(ZC_PIN) == 1)
+    {
+        if (++timeout > ZC_TIMEOUT)
+            return 0;   // No signal
+    }
+
+    return 1;  // Zero-cross detected
 }
+
 
 /* ---------------- RMS ---------------- */
 
@@ -113,6 +130,7 @@ float ac_voltage_rms(void) {
   float v_adc, ac_signal, actual_voltage;
 
   waitForZeroCross();
+  GPIO_writePin(inc, 1);
   int i;
   for (i = 0; i < SAMPLE_COUNT; i++) {
     adc_val = readADCA0_oversampled();
@@ -123,6 +141,7 @@ float ac_voltage_rms(void) {
 
     sum_squares += actual_voltage * actual_voltage;
   }
+  GPIO_writePin(inc, 0);
 
   return sqrt(sum_squares / SAMPLE_COUNT);
 }
@@ -134,6 +153,7 @@ void main(void) {
   initADCA0();
   Device_initGPIO();
 
+  lcd_begin(16,2);
   GPIO_setPadConfig(inc, GPIO_PIN_TYPE_STD);
   GPIO_setDirectionMode(inc, GPIO_DIR_MODE_OUT);
 
@@ -144,22 +164,25 @@ void main(void) {
   GPIO_setDirectionMode(ZC_PIN, GPIO_DIR_MODE_IN);
 
   while (1) {
-    int v_out = (int)ac_voltage_rms();
-
+    //int v_out = (int)(ac_voltage_rms());
+int v_out = (int)((0.9857f * ((int)(ac_voltage_rms()))) - 18.67f);
     if (v_out < 100 || v_out > 1000)
       v_out = 0;
 
     error = v_out - target;
     uartPrintf("vout=%d\n", v_out);
+     lcd_clear();
+    lcd_setCursor(0,0);
+lcd_printf("v_out = %d",v_out);
     if (error >= 4) {
-      GPIO_writePin(inc, 0);
-      GPIO_writePin(dec, 1);
+      //GPIO_writePin(inc, 0);
+      //GPIO_writePin(dec, 1);
     } else if (error <= -4) {
-      GPIO_writePin(dec, 0);
-      GPIO_writePin(inc, 1);
+      //GPIO_writePin(dec, 0);
+      //GPIO_writePin(inc, 1);
     } else {
-      GPIO_writePin(inc, 0);
-      GPIO_writePin(dec, 0);
+      //GPIO_writePin(inc, 0);
+     // GPIO_writePin(dec, 0);
     }
   }
 }
