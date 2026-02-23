@@ -78,7 +78,7 @@
 
 #include "i2cLib_FIFO_polling.h"
 
-
+  int i =0;
 //
 // Globals
 //
@@ -93,13 +93,31 @@ struct I2CHandle *currentMsgPtr;                   // Used in interrupt
 //!     SDA     | DEVICE_GPIO_PIN_SDAA   |  SDA
 //!  --------------------------------
 
+//--------------------------------------------
+
+typedef struct
+{
+    uint16_t version;        // 2 bytes
+    uint16_t voltage_x100;   // 2 bytes
+    uint16_t current_x100;   // 2 bytes
+    uint16_t crc;            // 2 bytes
+} DeviceData_t;
+
+typedef union
+{
+    DeviceData_t data;   // logical view
+   uint8_t      bytes[8]; // raw EEPROM view
+} DeviceDataUnion_t;
+
+//-----------------------------------------------------
+
 
 uint16_t passCount = 0;
 uint16_t failCount = 0;
 
 uint16_t AvailableI2C_targets[20];
-uint16_t TX_MsgBuffer[MAX_BUFFER_SIZE];
-uint16_t RX_MsgBuffer[MAX_BUFFER_SIZE];
+uint8_t TX_MsgBuffer[MAX_BUFFER_SIZE];
+uint8_t RX_MsgBuffer[MAX_BUFFER_SIZE];
 uint32_t ControlAddr;
 uint16_t status;
 
@@ -187,29 +205,32 @@ void main(void)
 
     I2Cinit();
 
+
     //I2Cs connected to I2CA will be found in AvailableI2C_targets buffer
     //after you run I2CBusScan function.
     uint16_t *pAvailableI2C_targets = AvailableI2C_targets;
     status = I2CBusScan(I2CA_BASE, pAvailableI2C_targets);
 
-  int i =0;
+
+
+
     uartPrintf("fisrt addr = %u\n",pAvailableI2C_targets[0]);
      uartPrintf("fisrt addr1 = %u\n",pAvailableI2C_targets[1]);
      uartPrintf("fisrt addr1 = %u\n",pAvailableI2C_targets[2]);
 
-   
+   DeviceDataUnion_t u;
 
-    for(i=0;i<MAX_BUFFER_SIZE;i++)
-    {
-        TX_MsgBuffer[i] = 0;
-        RX_MsgBuffer[i] = 0;
-        
-    }
+   u.data.voltage_x100=100;
+
+    for(i = 0; i < 8; i++)
+{
+    TX_MsgBuffer[i] = u.bytes[i];
+}
 
     EEPROM.TargetAddr      = 0x50;
     EEPROM.base           = I2CA_BASE;
     EEPROM.pControlAddr   = &ControlAddr;
-    EEPROM.NumOfAddrBytes = 2;
+    EEPROM.NumOfAddrBytes = 1;
     EEPROM.pTX_MsgBuffer  = TX_MsgBuffer;
     EEPROM.pRX_MsgBuffer  = RX_MsgBuffer;
     EEPROM.NumOfAttempts  = 5;
@@ -219,22 +240,21 @@ void main(void)
 int j=0;
     //Example 1: EEPROM Byte Write
     //Write 11 to EEPROM address 0x0
-    /*
+    
     ControlAddr = 0;
-    EEPROM.NumOfDataBytes = 1;
-    TX_MsgBuffer[0]       = 11;
+    EEPROM.NumOfDataBytes = 8;
     status = I2C_ControllerTransmitter(&EEPROM);
     uartPrintf("write status = %u\n",status);
 
-for(j=0; j<MAX_BUFFER_SIZE; ++j) {
-    uartPrintf("write : %u\n",TX_MsgBuffer[j]);
+for(j=0; j<8; ++j) {
+    uartPrintf("write : %u\n",TX_MsgBuffer[j]&0xff);
 }
     //Wait for EEPROM write cycle time
     //This delay is not mandatory. User can run their application code instead.
     //It is however important to wait for EEPROM write cycle time before you initiate
     //another read / write transaction
     DEVICE_DELAY_US(EEPROM.WriteCycleTime_in_us);
-*/
+
     //Example 2: EEPROM Byte Read
     //Make sure 11 is written to EEPROM address 0x0
 
@@ -243,10 +263,25 @@ EEPROM.NumOfDataBytes = 0;   // ONLY address bytes
 status = I2C_ControllerTransmitter(&EEPROM);
 DEVICE_DELAY_US(50);
 
-EEPROM.NumOfDataBytes = 1;
+EEPROM.NumOfDataBytes = 8;
 status = I2C_ControllerReceiver(&EEPROM);
 
-uartPrintf("READ VALUE = %u\n", RX_MsgBuffer[0]);
+ uartPrintf("read status = %d\n",status);
+
+for(j=0; j<8; ++j) {
+    uartPrintf("Read : %u\n",RX_MsgBuffer[j]);
+}
+
+DeviceDataUnion_t r;
+int i;
+
+/* RX_MsgBuffer[] already filled by I2C read */
+
+for(i = 0; i < 8; i++)
+{
+    r.bytes[i] = (uint8_t)RX_MsgBuffer[i];
+}
+uartPrintf("read = %u\n",r.data.voltage_x100);
 /*
     ControlAddr = 0;
     EEPROM.pControlAddr   = &ControlAddr;
@@ -254,10 +289,6 @@ uartPrintf("READ VALUE = %u\n", RX_MsgBuffer[0]);
     status = I2C_ControllerReceiver(&EEPROM);
 */
 
-    uartPrintf("read status = %u\n",status);
-   for(j=0; j<MAX_BUFFER_SIZE; ++j) {
-    uartPrintf("read : %u\n",RX_MsgBuffer[j]);
-}
 
     while(I2C_getStatus(EEPROM.base) & I2C_STS_BUS_BUSY);
 
@@ -418,4 +449,3 @@ void I2Cinit(void)
 //
 // End of File
 //
-
