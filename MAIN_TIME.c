@@ -5,11 +5,11 @@
 //----------------------------------------------------------------------------
 
 //----------------------------Pin Defination-------------------------------------
-#define TM_CLK P00 // TM1637 CLK
-#define TM_DIO P01 // TM1637 DIO
-#define SETTING P10
-#define UP P03
-#define DOWN P02
+#define TM_CLK P13 // TM1637 CLK
+#define TM_DIO P14 // TM1637 DIO
+#define SETTING P30
+#define UP P11
+#define DOWN P10
 //--------------------------------------------------------------------------------
 
 //----------flash---------------------------------------------------
@@ -361,7 +361,7 @@ unsigned char counter_display = 1, dis_start = 0, dis_end = 5,voltage_count=1;
 #define GAIN_FACTOR 0.002222
 #define SAMPLE_COUNT 402 //402
 
-#define CUR_ADC_OFFSET 2.47  //2.10
+#define CUR_ADC_OFFSET 2.5  //2.10
 #define BURDEN_GAIN 36.0
 #define CURRENT_SAMPLES 101
 
@@ -380,8 +380,8 @@ void TM1637_Stop(void);
 void TM1637_WriteByte(unsigned char dat);
 void TM1637_DisplayRaw(unsigned char d0,
                        unsigned char d1,
-                       unsigned char d2,
-                       unsigned char d3);
+                       unsigned char d2
+												 );
 void TM1637_DisplayString(const char *str);
 void TM1637_DisplayCurrent(float current);
 void TM1637_DisplayNumber(unsigned int num);
@@ -502,10 +502,10 @@ int ac_voltage_rms_input(uint8_t state)
     float adc_val, v_adc, ac_signal, actual_voltage;
 
     if(state) {
-    ENABLE_ADC_AIN1; //input,ENABLE_ADC_AIN1;
+    ENABLE_ADC_AIN4; //input,ENABLE_ADC_AIN1;
     }
     else {
-        ENABLE_ADC_AIN4; //output,ENABLE_ADC_AIN4
+        ENABLE_ADC_AIN5; //output,ENABLE_ADC_AIN4
     }
     ENABLE_ADC;
 
@@ -517,7 +517,7 @@ int ac_voltage_rms_input(uint8_t state)
         ;
     while (P15 == 0 && (++zc_flag < 300))
         ;
-        P14 =1;
+       
     for (i = 0; i < SAMPLE_COUNT; i++)
     {
         adc_val = adc_data();
@@ -531,7 +531,7 @@ int ac_voltage_rms_input(uint8_t state)
         
     }
     // EA = 1;
-    P14=0;
+   
     DISABLE_ADC;
 
     return isqrt32(sum_squares / SAMPLE_COUNT);
@@ -547,7 +547,7 @@ float ac_current_rms(void)
     double sum_squares = 0.0;
     float adc_val, v_adc, v_ac, i_secondary, i_primary;
 
-    ENABLE_ADC_AIN5;
+    ENABLE_ADC_AIN6;
     ENABLE_ADC;
     ref = 5;
     for (i = 0; i < CURRENT_SAMPLES; i++)
@@ -625,8 +625,7 @@ void TM1637_WriteByte(unsigned char dat)
 
 void TM1637_DisplayRaw(unsigned char d0,
                        unsigned char d1,
-                       unsigned char d2,
-                       unsigned char d3)
+                       unsigned char d2)
 {
     TM1637_Start();
     TM1637_WriteByte(0x40);
@@ -638,7 +637,7 @@ void TM1637_DisplayRaw(unsigned char d0,
     TM1637_WriteByte(d0);
     TM1637_WriteByte(d1);
     TM1637_WriteByte(d2);
-    TM1637_WriteByte(d3);
+    //TM1637_WriteByte(d3);
 
     TM1637_Stop();
 
@@ -649,10 +648,10 @@ void TM1637_DisplayRaw(unsigned char d0,
 
 void TM1637_DisplayString(const char *str)
 {
-    unsigned char d[4] = {SEG_BLANK, SEG_BLANK, SEG_BLANK, SEG_BLANK};
+    unsigned char d[3] = {SEG_BLANK, SEG_BLANK, SEG_BLANK};
     unsigned char i = 0,j=0;
 
-    while (str[j] != '\0' && i < 4)
+    while (str[j] != '\0' && i < 3)
     {
         
 			//IP.C
@@ -667,14 +666,14 @@ void TM1637_DisplayString(const char *str)
 				}
     }
 
-    TM1637_DisplayRaw(d[0], d[1], d[2], d[3]);
+    TM1637_DisplayRaw(d[0], d[1], d[2]);
 }
 
 void TM1637_DisplayCurrent(float current)
 {
     unsigned int int_part;
     unsigned int dec_part;
-    unsigned char d0, d1, d2, d3;
+    unsigned char d0, d1, d2;
 
     if (current < 0)
         current = 0;
@@ -687,26 +686,26 @@ void TM1637_DisplayCurrent(float current)
     d0 = segCode[int_part / 10];
     d1 = segCode[int_part % 10];
     d2 = segCode[dec_part / 10];
-    d3 = segCode[dec_part % 10];
+    
 
     d1 |= SEG_DP;
 
-    TM1637_DisplayRaw(d0, d1, d2, d3);
+    TM1637_DisplayRaw(d0, d1, d2);
 }
 
 void TM1637_DisplayNumber(unsigned int num)
 {
-    unsigned char d[4];
+    unsigned char d[3];
 
-    if (num > 9999)
-        num = 9999;
+    if (num > 999)
+        num = 999;
 
-    d[0] = segCode[num / 1000];
-    d[1] = segCode[(num / 100) % 10];
-    d[2] = segCode[(num / 10) % 10];
-    d[3] = segCode[num % 10];
+    d[0] = segCode[num / 100];
+    d[1] = segCode[(num / 10) % 10];
+    d[2] = segCode[(num / 1) % 10];
+    
 
-    TM1637_DisplayRaw(d[0], d[1], d[2], d[3]);
+    TM1637_DisplayRaw(d[0], d[1], d[2]);
 }
 
 //----------------------------------------------------------------------------------
@@ -724,15 +723,15 @@ void trip(char n)
 
     case 1:
         P17 = 0;
-		    P13 = 1;
+		    P01 = 1;
 		    P12 = 1;
 		    EA = 0;
         while (UP == 0)
         {
             TM1637_DisplayString("E-01");
-            P16 = 1;
+            P00 = 1;
             Timer2_Delay(24000000, 13, 500);
-            P16 = 0;
+            P00 = 0;
             if (error < 0)
             {
                 TM1637_DisplayString("INC");
@@ -765,7 +764,7 @@ void trip(char n)
         { // 40 9sec
 					  i_high = 1;
             relay_flag = 0;
-					  P16=0;
+					  P00=0;
 				
         }
         else
@@ -780,7 +779,7 @@ void trip(char n)
         if (trip_count > olt)
         {   
 					  P17 = 0;
-            P16 = 0;
+            P00 = 0;
 				    P13 = 1;
 		        P12 = 1;
 				    //EA = 0;
@@ -793,11 +792,11 @@ void trip(char n)
 						
 							 timer_20ms = 0;
 							while( timer_20ms < 100 ) {
-							P16 =1;
+							P00 =1;
 							}
 							  timer_20ms = 0;
 							while( timer_20ms < 100 ) {
-							P16 =0;
+							P00 =0;
 							}
                 ++delay_temp;
             }
@@ -806,7 +805,7 @@ void trip(char n)
 				    timer_20ms = 0;
 						on_status = 1;
 						i_rms = 0;
-						P16=0;
+						P00=0;
 						relay_flag = 0;
 						counter_display=1;
 						TM1637_DisplayString("IP");
@@ -834,7 +833,7 @@ void trip(char n)
         { // 40 9sec
 					  i_low = 1;
             relay_flag = 0;
-					  P16=0;
+					  P00=0;
 				
         }
         else
@@ -858,7 +857,7 @@ void trip(char n)
 				 }
         if (trip_count > hlt)
         { // 40 9sec
-					  P16=0;
+					  P00=0;
                       o_low=1;
             relay_flag = 0;
         }
@@ -883,7 +882,7 @@ void trip(char n)
 				 }
         if (trip_count > hlt)
         { // 40 9sec
-					  P16=0;
+					  P00=0;
                       o_high=1;
             relay_flag = 0;
         }
@@ -896,8 +895,8 @@ void trip(char n)
 				case 7:
 					
             P17 = 0;
-            P16 = 0;
-				    P13 = 1;
+            P00 = 0;
+				    P01 = 1;
 		        P12 = 1;
 				   // EA = 0;
 				  delay_temp = 0;
@@ -908,11 +907,11 @@ void trip(char n)
 						
 							 timer_20ms = 0;
 							while( timer_20ms < 100 ) {
-							P16 =1;
+							P00 =1;
 							}
 							  timer_20ms = 0;
 							while( timer_20ms < 100 ) {
-							P16 =0;
+							P00 =0;
 							}
                 ++delay_temp;
             }
@@ -1025,7 +1024,7 @@ void buzer_on()
         buzer_count = 0;
     }
 
-    P16 = buzer;
+    P00 = buzer;
 }
 
 //----------------------------------------------------------------------------------
@@ -1087,7 +1086,7 @@ else
 			   if(start_flag == 0) {
 				 start_flag = 1;
 					 on_status = 0;
-					P16=0;
+					P00=0;
 					 TM1637_DisplayString("IP");
 				 }     	
        
@@ -1142,22 +1141,21 @@ void main(void)
     MODIFY_HIRC(HIRC_24);
     //Enable_UART0_VCOM_printf_24M_115200();
 
-    P01_QUASI_MODE;
-    P00_QUASI_MODE;
+    P13_QUASI_MODE;
+    P14_QUASI_MODE;
     P12_PUSHPULL_MODE;
-    P13_PUSHPULL_MODE;
+    P01_PUSHPULL_MODE;
     P17_PUSHPULL_MODE;
-    P16_PUSHPULL_MODE;
+    P00_PUSHPULL_MODE;
     P15_INPUT_MODE;
     P11_INPUT_MODE;
     P10_INPUT_MODE;
-    P03_INPUT_MODE;
-    P14_PUSHPULL_MODE;
+    P30_INPUT_MODE;
     
     P12 = 1;
-    P13 = 1;
+    P01 = 1;
     P17 = 0;
-    P16 = 0;
+    P00 = 0;
 
 
     if (Load_Config() == 0)
@@ -1179,7 +1177,7 @@ void main(void)
         config.ol2 = 13;
         config.ipc = 1.0;//0.92
         config.opc = 1.0; //0.92
-        config.oac = 1.18;
+        config.oac = 1.0;
         config.auto_status = 1;
 
         Save_Config(); // store defaults
@@ -1208,19 +1206,19 @@ on_second = (int)(pod_delay/5);
         if (error >= band_inc && aut)
         {
             P12 = 1;
-            P13 = 0;
+            P01 = 0;
             error_flag = 1;
         }
         else if (error <= band_dec && aut)
         {
-            P13 = 1;
+            P01 = 1;
             P12 = 0;
             error_flag = 1;
         }
         else if (aut == 1)
         {
             P12 = 1;
-            P13 = 1;
+            P01 = 1;
             error_flag = 0;
 					   //error_count = 0;
         }
@@ -1253,7 +1251,7 @@ on_second = (int)(pod_delay/5);
 						voltage_count = 1;
 						}
 					
-            i_rms = (ac_current_rms() - 1.49) * current_cal;
+            i_rms = (ac_current_rms()) * current_cal;
 					
 					
            
@@ -1293,7 +1291,7 @@ on_second = (int)(pod_delay/5);
         else
         {
             if (error_count > 20)
-                P16 = 0;
+                P00 = 0;
             ++error_count;
         }
 
@@ -1310,20 +1308,20 @@ on_second = (int)(pod_delay/5);
 
             if (UP==1)
             {
-                P13 = 1;
+                P01 = 1;
                 P12 = 0;
             }
 
             else if (DOWN == 1)
             {
                 P12 = 1;
-                P13 = 0;
+                P01 = 0;
             }
 
             else
             {
                 P12 = 1;
-                P13 = 1;
+                P01 = 1;
             }
         }
 
@@ -1358,7 +1356,7 @@ on_second = (int)(pod_delay/5);
         {
                       trip_count = 0;
 					  error_code = 0;
-                      P16 = 0;
+                      P00 = 0;
 					
 					  if(i_high == 1) {
 							
