@@ -12,6 +12,22 @@
 #define DOWN P10
 //--------------------------------------------------------------------------------
 
+//-------------------------LED_TYPES----------------------------------------------
+
+typedef enum {
+    LED_OVL = 0,   // A
+    LED_IP,        // B
+    LED_OP,        // C
+    LED_OA,        // D
+    LED_AUTO,      // E
+    LED_DELAY,     // F
+    LED_HILO,      // G
+    LED_OUT        // DP
+} led_type_t;
+
+//-----------------------------------------------------------------------------------
+
+
 //----------flash---------------------------------------------------
 
 #define CONFIG_FLASH_ADDR 0x3E00   // 15872
@@ -349,6 +365,7 @@ volatile unsigned int ms_counter = 0, ui = 0, timer_20ms = 0, buzer_count = 0, t
 volatile unsigned int loop_flag = 0;
 volatile char band_inc = 3, band_dec = -3,v_in_count=0;
 unsigned char counter_display = 1, dis_start = 0, dis_end = 5,voltage_count=1;
+unsigned char led_state = 0;
 
 //-----------------------------------------------------------------------------------
 
@@ -707,6 +724,31 @@ void TM1637_DisplayNumber(unsigned int num)
 
     TM1637_DisplayRaw(d[0], d[1], d[2]);
 }
+
+//------------led_controll-----------------------------------
+
+void LED_Control(uint8_t led, bit state)
+{
+    if (state)
+        led_state |= (1 << led);
+    else
+        led_state &= ~(1 << led);
+
+    // FIXED ADDRESS MODE
+    TM1637_Start();
+    TM1637_WriteByte(0x44);   // command: fixed address
+    TM1637_Stop();
+
+    TM1637_Start();
+    TM1637_WriteByte(0xC3);   // 4th digit address
+    TM1637_WriteByte(led_state); // only LED data
+    TM1637_Stop();
+
+    TM1637_Start();
+    TM1637_WriteByte(0x8F);   // display ON + brightness
+    TM1637_Stop();
+}
+//-------------------------------------------------------
 
 //----------------------------------------------------------------------------------
 
@@ -1409,6 +1451,7 @@ on_second = (int)(pod_delay/5);
 
             if (ui_state == UI_NORMAL && error_code == 0 )
             {
+							 LED_Control(LED_IP,1);
                 switch (counter_display)
                 {
                 case 0:
