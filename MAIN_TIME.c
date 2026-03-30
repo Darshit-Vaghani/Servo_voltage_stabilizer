@@ -14,25 +14,25 @@
 
 //-------------------------LED_TYPES----------------------------------------------
 
-typedef enum {
-    LED_OVL = 0,   // A
-    LED_IP,        // B
-    LED_OP,        // C
-    LED_OA,        // D
-    LED_AUTO,      // E
-    LED_DELAY,     // F
-    LED_HILO,      // G
-    LED_OUT        // DP
+typedef enum
+{
+    LED_OVL = 0, // A
+    LED_IP,      // B
+    LED_OP,      // C
+    LED_OA,      // D
+    LED_AUTO,    // E
+    LED_DELAY,   // F
+    LED_HILO,    // G
+    LED_OUT      // DP
 } led_type_t;
 
 //-----------------------------------------------------------------------------------
 
-
 //----------flash---------------------------------------------------
 
-#define CONFIG_FLASH_ADDR 0x3E00   // 15872
-//#define CONFIG_FLASH_ADDR  0x3CCD   // exact 15.2 KB 15565
-//#define CONFIG_FLASH_SIZE 1 // 0.5 KB
+#define CONFIG_FLASH_ADDR 0x3E00 // 15872
+// #define CONFIG_FLASH_ADDR  0x3CCD   // exact 15.2 KB 15565
+// #define CONFIG_FLASH_SIZE 1 // 0.5 KB
 
 typedef struct
 {
@@ -43,15 +43,17 @@ typedef struct
     int16_t output_low;     // 2
     int16_t output_high;    // 2
     uint8_t dis;            // 1
+	uint16_t earth_trip;
 
     int16_t hlt_delay; // 2
 
-    uint8_t bur;        // bit (use 0/1)
+    uint8_t con;        // bit (use 0/1)
     uint8_t regulation; // 8 bit
     uint8_t olr;        // bit
     uint8_t ol1;        // 8 bit
     uint8_t olt;        // 8 bit
     uint8_t ol2;        // 8 bit
+	uint8_t earth_onoff;
 
     float ipc; // 4
     float opc; // 4
@@ -103,7 +105,7 @@ bit Load_Config(void)
 
 //---------------------Protection Configuration-----------------------------------
 
-//#define START_TIME_IN_SEC 1 // at 1 12sec   50 count
+// #define START_TIME_IN_SEC 1 // at 1 12sec   50 count
 
 //--------------------------------------------------------------------------------
 
@@ -113,12 +115,11 @@ bit Load_Config(void)
 #define MIN_TARGET_VOLTAGE 210
 #define DEFAULT_TARGET_VOLTAGE 240
 
-
 #define MAX_ON_DELAY 60
 #define MIN_ON_DELAY 3
 #define DEFAULT_ON_DELAY 10
 
-#define MAX_INPUT_LOW 40 // setvoltage-40   
+#define MAX_INPUT_LOW 40 // setvoltage-40
 #define MIN_INPUT_LOW 130
 #define DEFAULT_INPUT_LOW 150
 
@@ -127,7 +128,7 @@ bit Load_Config(void)
 #define DEFAULT_INPUT_HIGH 290
 
 #define MAX_OUTPUT_HIGH 280
-#define MIN_OUTPUT_HIGH 30 //setvoltage + 30
+#define MIN_OUTPUT_HIGH 30 // setvoltage + 30
 #define DEFAULT_OUTPUT_HIGH 270
 
 #define MAX_OUTPUT_LOW 30 // setvoltage - 30
@@ -136,22 +137,20 @@ bit Load_Config(void)
 
 #define MAX_OL1 100
 #define MIN_OL1 2
-#define DEFAULT_OL1 10 //current set in decimal point not in integer form ***
+#define DEFAULT_OL1 10 // current set in decimal point not in integer form ***
 
 #define MAX_OL1_TIME 150
-#define MIN_OL1_TIME 10  //default time is 90 sec
+#define MIN_OL1_TIME 10 // default time is 90 sec
 #define DEFAULT_OL1_TIME 90
 
 #define MAX_REG 10
 #define MIN_REG 2
 #define DEFAULT_REG 3
 
-//input betwwn 170 to 270 is motor side fault show M.F on display
-//1 second delay in imd trip
+// input betwwn 170 to 270 is motor side fault show M.F on display
+// 1 second delay in imd trip
 
-//1.contactor trip detection_show disply is C.F,2. disply trip show contrinusoly with their value. 3. 
-
-
+// 1.contactor trip detection_show disply is C.F,2. disply trip show contrinusoly with their value. 3.
 
 //-------------------------------------------------------------------------------
 
@@ -185,9 +184,9 @@ typedef enum
     OA,
     HLT,
     HLT_DELAY_SET,
-    BUR,
-    BUR_ON,
-    BUR_OFF,
+    CON,
+    CON_ON,
+    CON_OFF,
     REG,
     REGULATION_SET,
     OLR,
@@ -205,6 +204,11 @@ typedef enum
     OPC_SET,
     OAC,
     OAC_SET,
+		EARTH,
+		EARTH_HIGH_SET,
+		EARTH_HIGH,
+		EARTH_ON,
+		EARTH_OFF,
     ALL,
     US,
     FS,
@@ -233,22 +237,22 @@ ui_state_t ui_state;
 #define SEG_H 0x76
 #define SEG_I 0x06 // same as 1
 #define SEG_J 0x1E
-//#define SEG_K 0x75 // approx
+// #define SEG_K 0x75 // approx
 #define SEG_L 0x38
-//#define SEG_M 0x37 // approx
+// #define SEG_M 0x37 // approx
 #define SEG_N 0x54
 #define SEG_O 0x3F
 #define SEG_P 0x73
-//#define SEG_Q 0x67 // approx
+// #define SEG_Q 0x67 // approx
 #define SEG_R 0x50
 #define SEG_S 0x6D
 #define SEG_T 0x78
 #define SEG_U 0x3E
-//#define SEG_V 0x3E // same as U
-//#define SEG_W 0x2A // approx
-//#define SEG_X 0x76 // same as H
-//#define SEG_Y 0x6E
-//#define SEG_Z 0x5B // same as 2
+// #define SEG_V 0x3E // same as U
+// #define SEG_W 0x2A // approx
+// #define SEG_X 0x76 // same as H
+// #define SEG_Y 0x6E
+// #define SEG_Z 0x5B // same as 2
 
 #define SEG_DASH 0x40  // -
 #define SEG_UNDER 0x08 // _
@@ -291,7 +295,7 @@ unsigned char TM1637_CharToSeg(char c)
         return SEG_E;
     case 'G':
         return SEG_G;
-		case 'F':
+    case 'F':
         return SEG_F;
     case 'H':
         return SEG_H;
@@ -309,26 +313,26 @@ unsigned char TM1637_CharToSeg(char c)
         return SEG_R;
     case 'S':
         return SEG_S;
-		case 'T':
-			return SEG_T;
-        case 'U':
+    case 'T':
+        return SEG_T;
+    case 'U':
         return SEG_U;
-   
+
     case '-':
         return SEG_DASH;
 
     case '0':
         return SEG_0;
 
-     case '1':
+    case '1':
         return SEG_1;
-		 case '2':
+    case '2':
         return SEG_2;
-		 case '3':
+    case '3':
         return SEG_3;
-		 case '4':
+    case '4':
         return SEG_4;
-		 case '5':
+    case '5':
         return SEG_5;
 
     case ' ':
@@ -340,31 +344,32 @@ unsigned char TM1637_CharToSeg(char c)
 }
 
 //---------------------------------------------------------------------------------
-//dis update 45 at 10 sec
+// dis update 45 at 10 sec
 //------------------------Global Variable Section----------------------------------
 uint16_t ADCdataAIN;
 
-int v_out = 0,v_out_raw=0;
+int v_out = 0, v_out_raw = 0;
 float i_rms = 0;
-int v_in = 0,v_in_raw=0;
+int v_in = 0, v_in_raw = 0;
+int v_con = 0,v_earth=0;
 float output_cal = 0.92, input_cal = 0.92, current_cal = 1;
 int error = 0;
-unsigned int up_counter = 0,down_counter=0,menu_counter=0,max_number=1000,min_number=0;
+unsigned int up_counter = 0, down_counter = 0, menu_counter = 0, max_number = 1000, min_number = 0;
 float ref = 0.0;
-bit relay_flag = 0,error_code=0,i_low=0,i_high=0,trip_flag=0,o_low=0,o_high=0;
+bit relay_flag = 0, error_code = 0, i_low = 0, i_high = 0, trip_flag = 0, o_low = 0, o_high = 0;
 bit start_flag = 0;
-bit error_flag = 0, aut = 1,on_status=1;
+bit error_flag = 0, aut = 1, on_status = 1;
 bit buzer = 0;
-bit setting_press = 0,up_flag=0,down_flag=0,set_flag=0;
-unsigned int error_count = 0,delay_temp=0,disp_update_error=0, out_high = 270, out_low = 210, in_high = 260, in_low = 180, ol1 = 3, ol2 = 5, hlt = 5, olt = 120,pod_delay=41;
+bit setting_press = 0, up_flag = 0, down_flag = 0, set_flag = 0;
+unsigned int error_count = 0, delay_temp = 0, disp_update_error = 0, out_high = 270, out_low = 210, in_high = 260, in_low = 180, ol1 = 3, ol2 = 5, hlt = 5, olt = 120, pod_delay = 41,earth_cutoff= 15;
 int zc_flag = 0, temp = 0;
-unsigned char update_rate = 20,on_second=10,time_count_error=5;
+unsigned char update_rate = 25, on_second = 10, time_count_error = 5;
 int target = 230;
 volatile bit display_update_flag = 0;
 volatile unsigned int ms_counter = 0, ui = 0, timer_20ms = 0, buzer_count = 0, trip_count = 0;
 volatile unsigned int loop_flag = 0;
-volatile char band_inc = 3, band_dec = -3,v_in_count=0;
-unsigned char counter_display = 1, dis_start = 0, dis_end = 5,voltage_count=1;
+volatile char band_inc = 3, band_dec = -3, v_in_count = 0;
+unsigned char counter_display = 0, dis_start = 0, dis_end = 2, voltage_count = 1;
 unsigned char led_state = 0;
 
 //-----------------------------------------------------------------------------------
@@ -373,12 +378,12 @@ unsigned char led_state = 0;
 #define ADC_MAX 4095.0
 #define ADC_REF_VOLT 5.00
 // #define ADC_OFFSET 1.649
-#define ADC_OFFSET 2.47 //2.06
+#define ADC_OFFSET 2.47 // 2.47
 // #define GAIN_FACTOR 0.000202020
 #define GAIN_FACTOR 0.002222
-#define SAMPLE_COUNT 402 //402
+#define SAMPLE_COUNT 402 // 402
 
-#define CUR_ADC_OFFSET 2.5  //2.10
+#define CUR_ADC_OFFSET 2.5 // 2.10
 #define BURDEN_GAIN 36.0
 #define CURRENT_SAMPLES 101
 
@@ -388,7 +393,7 @@ unsigned char led_state = 0;
 void Delay_us(unsigned int us);
 
 int adc_data(void);
-//int ac_voltage_rms(void);
+// int ac_voltage_rms(void);
 int ac_voltage_rms_input(uint8_t state);
 float ac_current_rms(void);
 
@@ -397,8 +402,7 @@ void TM1637_Stop(void);
 void TM1637_WriteByte(unsigned char dat);
 void TM1637_DisplayRaw(unsigned char d0,
                        unsigned char d1,
-                       unsigned char d2
-												 );
+                       unsigned char d2);
 void TM1637_DisplayString(const char *str);
 void TM1637_DisplayCurrent(float current);
 void TM1637_DisplayNumber(unsigned int num);
@@ -509,8 +513,6 @@ unsigned long isqrt32(unsigned long x)
 // }
 // //----------------------------------------------------------------------------------
 
-
-
 //-------------------------Input Voltage Measurment---------------------------------
 int ac_voltage_rms_input(uint8_t state)
 {
@@ -518,11 +520,21 @@ int ac_voltage_rms_input(uint8_t state)
     float sum_squares = 0.0;
     float adc_val, v_adc, ac_signal, actual_voltage;
 
-    if(state) {
-    ENABLE_ADC_AIN4; //input,ENABLE_ADC_AIN1;
+    if (state == 1)
+    {
+        ENABLE_ADC_AIN4; // input,ENABLE_ADC_AIN1;
     }
-    else {
-        ENABLE_ADC_AIN5; //output,ENABLE_ADC_AIN4
+    else if(state == 0)
+    {
+        ENABLE_ADC_AIN5; // output,ENABLE_ADC_AIN4
+    }
+    else if(state == 2)
+    {
+        ENABLE_ADC_AIN2; // output,ENABLE_ADC_AIN4
+    }
+    else if(state == 3)
+    {
+        ENABLE_ADC_AIN3; // output,ENABLE_ADC_AIN4
     }
     ENABLE_ADC;
 
@@ -534,21 +546,19 @@ int ac_voltage_rms_input(uint8_t state)
         ;
     while (P15 == 0 && (++zc_flag < 300))
         ;
-       
+
     for (i = 0; i < SAMPLE_COUNT; i++)
     {
         adc_val = adc_data();
         v_adc = (adc_val * ADC_REF_VOLT) / ADC_MAX;
-			ref += v_adc;
+        ref += v_adc;
         ac_signal = v_adc - ADC_OFFSET;
         actual_voltage = ac_signal / GAIN_FACTOR;
 
         sum_squares += actual_voltage * actual_voltage;
-
-        
     }
     // EA = 1;
-   
+
     DISABLE_ADC;
 
     return isqrt32(sum_squares / SAMPLE_COUNT);
@@ -583,7 +593,7 @@ float ac_current_rms(void)
 
     DISABLE_ADC;
     // printf("The offset is %0.3f \n",ref);
-    //return isqrt32(sum_squares / CURRENT_SAMPLES);
+    // return isqrt32(sum_squares / CURRENT_SAMPLES);
     return sqrt(sum_squares / CURRENT_SAMPLES);
 }
 
@@ -654,7 +664,7 @@ void TM1637_DisplayRaw(unsigned char d0,
     TM1637_WriteByte(d0);
     TM1637_WriteByte(d1);
     TM1637_WriteByte(d2);
-    //TM1637_WriteByte(d3);
+    // TM1637_WriteByte(d3);
 
     TM1637_Stop();
 
@@ -666,21 +676,23 @@ void TM1637_DisplayRaw(unsigned char d0,
 void TM1637_DisplayString(const char *str)
 {
     unsigned char d[3] = {SEG_BLANK, SEG_BLANK, SEG_BLANK};
-    unsigned char i = 0,j=0;
+    unsigned char i = 0, j = 0;
 
     while (str[j] != '\0' && i < 3)
     {
-        
-			//IP.C
-			  if(str[j] != '.') {
-					d[i] = TM1637_CharToSeg(str[j]);
-        i++;
-					++j;
-				}
-				else {
-				d[i-1] |= SEG_DP;
-					++j;
-				}
+
+        // IP.C
+        if (str[j] != '.')
+        {
+            d[i] = TM1637_CharToSeg(str[j]);
+            i++;
+            ++j;
+        }
+        else
+        {
+            d[i - 1] |= SEG_DP;
+            ++j;
+        }
     }
 
     TM1637_DisplayRaw(d[0], d[1], d[2]);
@@ -703,7 +715,6 @@ void TM1637_DisplayCurrent(float current)
     d0 = segCode[int_part / 10];
     d1 = segCode[int_part % 10];
     d2 = segCode[dec_part / 10];
-    
 
     d1 |= SEG_DP;
 
@@ -720,7 +731,6 @@ void TM1637_DisplayNumber(unsigned int num)
     d[0] = segCode[num / 100];
     d[1] = segCode[(num / 10) % 10];
     d[2] = segCode[(num / 1) % 10];
-    
 
     TM1637_DisplayRaw(d[0], d[1], d[2]);
 }
@@ -736,16 +746,16 @@ void LED_Control(uint8_t led, bit state)
 
     // FIXED ADDRESS MODE
     TM1637_Start();
-    TM1637_WriteByte(0x44);   // command: fixed address
+    TM1637_WriteByte(0x44); // command: fixed address
     TM1637_Stop();
 
     TM1637_Start();
-    TM1637_WriteByte(0xC3);   // 4th digit address
+    TM1637_WriteByte(0xC3);      // 4th digit address
     TM1637_WriteByte(led_state); // only LED data
     TM1637_Stop();
 
     TM1637_Start();
-    TM1637_WriteByte(0x8F);   // display ON + brightness
+    TM1637_WriteByte(0x8F); // display ON + brightness
     TM1637_Stop();
 }
 //-------------------------------------------------------
@@ -756,234 +766,312 @@ void LED_Control(uint8_t led, bit state)
 
 void trip(char n)
 {
-    if(on_status == 0) {
-        ++trip_count;
-    
-    
-    switch (n)
+    if (on_status == 0)
     {
+        ++trip_count;
 
-    case 1:
-        P17 = 0;
-		    P01 = 1;
-		    P12 = 1;
-		    EA = 0;
-        while (UP == 0)
+        switch (n)
         {
-            TM1637_DisplayString("E-01");
-            P00 = 1;
-            Timer2_Delay(24000000, 13, 500);
-            P00 = 0;
-            if (error < 0)
+
+        case 1:
+            P17 = 0;
+            P01 = 1;
+            P12 = 1;
+            EA = 0;
+            while (UP == 0)
             {
-                TM1637_DisplayString("INC");
+                TM1637_DisplayString("E-01");
+                P00 = 1;
+                Timer2_Delay(24000000, 13, 500);
+                P00 = 0;
+                if (error < 0)
+                {
+                    TM1637_DisplayString("INC");
+                }
+                else
+                {
+                    TM1637_DisplayString("DEC");
+                }
+                Timer2_Delay(24000000, 11, 700);
+            }
+            start_flag = 0;
+            timer_20ms = 0;
+            on_status = 1;
+						LED_Control(LED_DELAY,1);
+            EA = 1;
+            break;
+
+        case 2:
+            ++disp_update_error;
+            LED_Control(LED_HILO, 1);
+            if (disp_update_error < 6)
+            {
+                TM1637_DisplayString("E-02");
+            }
+            else if (disp_update_error < 12)
+            {
+                TM1637_DisplayString("IPH");
             }
             else
             {
-                TM1637_DisplayString("DEC");
+                disp_update_error = 0;
             }
-            Timer2_Delay(24000000, 11, 700);
-        }
-				start_flag = 0;
-				timer_20ms = 0;
-				on_status = 1;
-				EA = 1;
-        break;
-
-    case 2:
-		    ++disp_update_error;
-		    
-		     if(disp_update_error < 6) {
-					 TM1637_DisplayString("E-02");
-				 }
-		     else if(disp_update_error < 12) {
-				 TM1637_DisplayString("IPH");
-				 }
-				 else {
-				 disp_update_error = 0;
-				 }
-        if (trip_count > hlt)
-        { // 40 9sec
-					  i_high = 1;
-            relay_flag = 0;
-					  P00=0;
-				
-        }
-        else
-        {
-            buzer_on();
-        }
-        break;
-				
-
-    case 3:
-
-        if (trip_count > olt)
-        {   
-					  P17 = 0;
-            P00 = 0;
-				    P13 = 1;
-		        P12 = 1;
-				    //EA = 0;
-					  delay_temp = 0;
-					  trip_flag = 1;
-            while (UP != 1 && delay_temp < 130)
+            if (trip_count > hlt)
+            { // 40 9sec
+                i_high = 1;
+                relay_flag = 0;
+                P00 = 0;
+            }
+            else
             {
-                TM1637_DisplayString("OL-1");
-							  
-						
-							 timer_20ms = 0;
-							while( timer_20ms < 100 ) {
-							P00 =1;
-							}
-							  timer_20ms = 0;
-							while( timer_20ms < 100 ) {
-							P00 =0;
-							}
-                ++delay_temp;
+                buzer_on();
             }
-						
-						start_flag = 0;
-				    timer_20ms = 0;
-						on_status = 1;
-						i_rms = 0;
-						P00=0;
-						relay_flag = 0;
-						counter_display=1;
-						TM1637_DisplayString("IP");
-				    //EA = 1;
-        }
-        else
-        {
-            buzer_on();
-        }
-        break;
-				
-				case 4:
-		    ++disp_update_error;
-		    
-		     if(disp_update_error < 6) {
-					 TM1637_DisplayString("E-03");
-				 }
-		     else if(disp_update_error < 12) {
-				 TM1637_DisplayString("IPL");
-				 }
-				 else {
-				 disp_update_error = 0;
-				 }
-        if (trip_count > hlt)
-        { // 40 9sec
-					  i_low = 1;
-            relay_flag = 0;
-					  P00=0;
-				
-        }
-        else
-        {
-            buzer_on();
-        }
-        break;
-        break;
-				
-				case 5:
-		    ++disp_update_error;
-		    
-		     if(disp_update_error < 6) {
-					 TM1637_DisplayString("E-04");
-				 }
-		     else if(disp_update_error < 12) {
-				 TM1637_DisplayString("OPL");
-				 }
-				 else {
-				 disp_update_error = 0;
-				 }
-        if (trip_count > hlt)
-        { // 40 9sec
-					  P00=0;
-                      o_low=1;
-            relay_flag = 0;
-        }
-        else
-        {
-            buzer_on();
-        }
-        break;
-				
-				
-				case 6:
-		    ++disp_update_error;
-		    
-		     if(disp_update_error < 6) {
-					 TM1637_DisplayString("E-05");
-				 }
-		     else if(disp_update_error < 12) {
-				 TM1637_DisplayString("OPH");
-				 }
-				 else {
-				 disp_update_error = 0;
-				 }
-        if (trip_count > hlt)
-        { // 40 9sec
-					  P00=0;
-                      o_high=1;
-            relay_flag = 0;
-        }
-        else
-        {
-            buzer_on();
-        }
-        break;
-				
-				case 7:
-					
+            break;
+
+        case 3:
+            LED_Control(LED_OVL, 1);
+            if (trip_count > olt)
+            {
+                P17 = 0;
+                P00 = 0;
+                P13 = 1;
+                P12 = 1;
+                // EA = 0;
+                delay_temp = 0;
+                trip_flag = 1;
+                while (UP != 1 && delay_temp < 130)
+                {
+                    TM1637_DisplayString("OL-1");
+
+                    timer_20ms = 0;
+                    while (timer_20ms < 100)
+                    {
+                        P00 = 1;
+                    }
+                    timer_20ms = 0;
+                    while (timer_20ms < 100)
+                    {
+                        P00 = 0;
+                    }
+                    ++delay_temp;
+                }
+
+                start_flag = 0;
+                timer_20ms = 0;
+                on_status = 1;
+                i_rms = 0;
+                P00 = 0;
+                relay_flag = 0;
+                counter_display = 1;
+                LED_Control(LED_DELAY,1);
+            }
+            else
+            {
+                buzer_on();
+            }
+            break;
+
+        case 4:
+            LED_Control(LED_OVL, 1);
+            ++disp_update_error;
+            LED_Control(LED_HILO, 1);
+            if (disp_update_error < 6)
+            {
+                TM1637_DisplayString("E-03");
+            }
+            else if (disp_update_error < 12)
+            {
+                TM1637_DisplayString("IPL");
+            }
+            else
+            {
+                disp_update_error = 0;
+            }
+            if (trip_count > hlt)
+            { // 40 9sec
+                i_low = 1;
+                relay_flag = 0;
+                P00 = 0;
+            }
+            else
+            {
+                buzer_on();
+            }
+            break;
+            break;
+
+        case 5:
+            ++disp_update_error;
+            LED_Control(LED_HILO, 1);
+            if (disp_update_error < 6)
+            {
+                TM1637_DisplayString("E-04");
+            }
+            else if (disp_update_error < 12)
+            {
+                TM1637_DisplayString("OPL");
+            }
+            else
+            {
+                disp_update_error = 0;
+            }
+            if (trip_count > hlt)
+            { // 40 9sec
+                P00 = 0;
+                o_low = 1;
+                relay_flag = 0;
+            }
+            else
+            {
+                buzer_on();
+            }
+            break;
+
+        case 6:
+            ++disp_update_error;
+            LED_Control(LED_HILO, 1);
+            if (disp_update_error < 6)
+            {
+                TM1637_DisplayString("E-05");
+            }
+            else if (disp_update_error < 12)
+            {
+                TM1637_DisplayString("OPH");
+            }
+            else
+            {
+                disp_update_error = 0;
+            }
+            if (trip_count > hlt)
+            { // 40 9sec
+                P00 = 0;
+                o_high = 1;
+                relay_flag = 0;
+            }
+            else
+            {
+                buzer_on();
+            }
+            break;
+
+        case 7:
+
             P17 = 0;
             P00 = 0;
-				    P01 = 1;
-		        P12 = 1;
-				   // EA = 0;
-				  delay_temp = 0;
+            P01 = 1;
+            P12 = 1;
+            // EA = 0;
+            LED_Control(LED_OVL, 1);
+            delay_temp = 0;
             while (UP != 1 && delay_temp < 130)
             {
                 TM1637_DisplayString("OL-2");
-							  
-						
-							 timer_20ms = 0;
-							while( timer_20ms < 100 ) {
-							P00 =1;
-							}
-							  timer_20ms = 0;
-							while( timer_20ms < 100 ) {
-							P00 =0;
-							}
+
+                timer_20ms = 0;
+                while (timer_20ms < 100)
+                {
+                    P00 = 1;
+                }
+                timer_20ms = 0;
+                while (timer_20ms < 100)
+                {
+                    P00 = 0;
+                }
                 ++delay_temp;
             }
-						start_flag = 0;
-				    timer_20ms = 0;
-						i_rms = 0;
-						on_status = 1;
-						relay_flag = 0;
-						counter_display=1;
-						TM1637_DisplayString("IP");
-				    //EA = 1;
-        break;
-					
+            start_flag = 0;
+            timer_20ms = 0;
+            i_rms = 0;
+            on_status = 1;
+            relay_flag = 0;
+            counter_display = 1;
+						LED_Control(LED_DELAY,1);
+            break;
+
+            case 8:
+            ++disp_update_error;
+
+            
+            if (trip_count > 28)
+            { // 40 9sec
+                P17 = 0;
+							LED_Control(LED_OUT,0);
+                P00 = 0;
+                P01 = 1;
+                P12 = 1;
+               TM1637_DisplayString("C.F");
+
+               while (UP != 1)
+            {
+                timer_20ms = 0;
+                while (timer_20ms < 100)
+                {
+                    P00 = 1;
+                }
+                timer_20ms = 0;
+                while (timer_20ms < 100)
+                {
+                    P00 = 0;
+                }
+            }
+            start_flag = 0;
+            timer_20ms = 0;
+            i_rms = 0;
+            on_status = 1;
+            relay_flag = 0;
+            counter_display = 1;
+						LED_Control(LED_DELAY,1);
+            }
+            else if(trip_count > 12)
+            {
+                buzer_on();
+            }
+            break;
+						
+						case 9:
+            ++disp_update_error;
+						
+            if (disp_update_error < 6)
+            {
+                TM1637_DisplayString("E-06");
+            }
+            else if (disp_update_error < 12)
+            {
+                TM1637_DisplayString("E.F");
+            }
+            else
+            {
+                disp_update_error = 0;
+            }
+            if (trip_count > hlt)
+            { // 40 9sec
+                P00 = 0;
+                relay_flag = 0;
+            }
+            else
+            {
+                buzer_on();
+            }
+            break;
+        }
     }
-} 
 }
 //-----------------------HELPER FUNCTION-----------------------------------------
-//write 15771
+// write 15771
 
 bit key_up_pressed()
 {
-    if (UP == 1 && up_flag==0)
+    if (UP == 1 && up_flag == 0)
     {
         Timer2_Delay(24000000, 1, 100);
-        up_flag=1;
-        menu_counter=0;
+        up_flag = 1;
+        menu_counter = 0;
         return 1;
     }
-    if(UP == 0) {up_flag=0;
-    up_counter = 0;
+    if (UP == 0)
+    {
+        up_flag = 0;
+        up_counter = 0;
     }
     return 0;
 }
@@ -993,28 +1081,32 @@ bit key_down_pressed()
     if (DOWN == 1 && down_flag == 0)
     {
         Timer2_Delay(24000000, 1, 100);
-        down_flag=1;
-        menu_counter=0;
+        down_flag = 1;
+        menu_counter = 0;
         return 1;
     }
-     if(DOWN == 0) {down_flag=0;
-    down_counter=0;}
+    if (DOWN == 0)
+    {
+        down_flag = 0;
+        down_counter = 0;
+    }
     return 0;
 }
 bit key_set_pressed()
 {
-    if (SETTING == 1 && set_flag==0)
+    if (SETTING == 1 && set_flag == 0)
     {
         Timer2_Delay(24000000, 1, 100);
-        set_flag=1;
-        menu_counter=0;
+        set_flag = 1;
+        menu_counter = 0;
         return 1;
     }
-     if(SETTING == 0) {set_flag=0;}
+    if (SETTING == 0)
+    {
+        set_flag = 0;
+    }
     return 0;
 }
-
-
 
 //--------------------------------------------------------------------------------
 
@@ -1027,19 +1119,19 @@ void set_dis()
 
     case 1:
         dis_start = 0;
-        dis_end = 1;
+        dis_end = 0;
         break;
     case 2:
-        dis_start = 2;
-        dis_end = 3;
+        dis_start = 1;
+        dis_end = 1;
         break;
     case 3:
-        dis_start = 4;
-        dis_end = 5;
+        dis_start = 2;
+        dis_end = 2;
         break;
     case 4:
         dis_start = 0;
-        dis_end = 5;
+        dis_end = 2;
         break;
     }
 }
@@ -1061,7 +1153,7 @@ void buzer_on()
     }
     ++buzer_count;
 
-    if (buzer_count > (time_count_error*2))
+    if (buzer_count > (time_count_error * 2))
     {
         buzer_count = 0;
     }
@@ -1096,21 +1188,21 @@ void Timer0_ISR(void) interrupt 1
 
     ms_counter++;
 
-    if (SETTING == 1)   // assuming active low button
-{
-    ++ui;
-}
-else
-{
-    ui = 0;
-}
+    if (SETTING == 1) // assuming active low button
+    {
+        ++ui;
+    }
+    else
+    {
+        ui = 0;
+    }
 
     if (ui > (time_count_error * 8))
     {
         update_rate = 0;
         ui = 0;
         temp = 999;
-        set_flag=1;
+        set_flag = 1;
         ui_state = AUT;
     }
 
@@ -1125,20 +1217,22 @@ else
 
     if (timer_20ms > pod_delay)
     {
-			   if(start_flag == 0) {
-				 start_flag = 1;
-					 on_status = 0;
-					P00=0;
-					 TM1637_DisplayString("IP");
-				 }     	
-       
+        if (start_flag == 0)
+        {
+            start_flag = 1;
+            on_status = 0;
+            P00 = 0;
+            LED_Control(LED_DELAY, 0);
+            // TM1637_DisplayString("IP");
+        }
+
         // printf("\n buzer off flag 1 \n");
     }
     else if (start_flag == 0)
     {
         buzer_on();
-			TM1637_DisplayNumber(on_second - (timer_20ms/time_count_error));
-			  //(on_second - (timer_20ms/13))
+        TM1637_DisplayNumber(on_second - (timer_20ms / time_count_error));
+        //(on_second - (timer_20ms/13))
     }
 }
 
@@ -1158,17 +1252,19 @@ void set_parameter()
     ol1 = config.ol1;
     ol2 = config.ol1 + 3;
     olt = (int)(config.olt * 4.44);
-	  pod_delay = (int)(config.on_delay  * 5);
+    pod_delay = (int)(config.on_delay * 5);
     input_cal = config.ipc;
     output_cal = config.opc;
     current_cal = config.oac;
+	  earth_cutoff = config.earth_trip;
 }
 
 //-----------------------------------------------------------------------------------
 
 //------------------------set_max_min_number-------------------------------------------
 
-void set_max_min(int max , int min) {
+void set_max_min(int max, int min)
+{
     max_number = max;
     min_number = min;
 }
@@ -1181,7 +1277,7 @@ void main(void)
 {
 
     MODIFY_HIRC(HIRC_24);
-    //Enable_UART0_VCOM_printf_24M_115200();
+    // Enable_UART0_VCOM_printf_24M_115200();
 
     P13_QUASI_MODE;
     P14_QUASI_MODE;
@@ -1193,12 +1289,11 @@ void main(void)
     P11_INPUT_MODE;
     P10_INPUT_MODE;
     P30_INPUT_MODE;
-    
+
     P12 = 1;
     P01 = 1;
     P17 = 0;
     P00 = 0;
-
 
     if (Load_Config() == 0)
     {
@@ -1211,29 +1306,30 @@ void main(void)
         config.output_high = 270;
         config.dis = 4;
         config.hlt_delay = 5;
-        config.bur = 0;
+        config.con = 0;
         config.regulation = 3;
         config.olr = 1;
         config.ol1 = 10;
         config.olt = 10;
         config.ol2 = 13;
-        config.ipc = 1.0;//0.92
-        config.opc = 1.0; //0.92
+        config.ipc = 1.0; // 0.92
+        config.opc = 1.0; // 0.92
         config.oac = 1.0;
         config.auto_status = 1;
+			  config.con = 1;
+			config.earth_onoff = 0;
+			config.earth_trip = 15;
 
         Save_Config(); // store defaults
     }
     set_parameter();
-on_second = (int)(pod_delay/5);
-		 v_in = (int)(ac_voltage_rms_input(1) * input_cal);
-		Timer0_Init_2ms();
-        
-		
-		 
+    LED_Control(LED_DELAY, 1);
+    on_second = (int)(pod_delay / 5);
+    v_in = (int)(ac_voltage_rms_input(1) * input_cal);
+    Timer0_Init_2ms();
 
-    //TM1637_DisplayString("IP");
-    
+    // TM1637_DisplayString("IP");
+
     while (1)
     {
         EA = 0;
@@ -1262,53 +1358,48 @@ on_second = (int)(pod_delay/5);
             P12 = 1;
             P01 = 1;
             error_flag = 0;
-					   //error_count = 0;
+            // error_count = 0;
         }
-        if (error_flag == 0 || error < (-220) || error_count > 50)
+        if ((error_flag == 0 || error < (-220) || error_count > 50) && on_status == 0)
         {
-					
-					  if(voltage_count == 1) {
-            v_in = (int)(ac_voltage_rms_input(1) * input_cal);
-							 if (v_in < 100 || v_in > 1000)
+            pod_delay = (int)(config.on_delay * 5);
+            time_count_error = 5;
+            on_second = (int)(pod_delay / 5);
+            if (voltage_count == 1)
             {
-                v_in = 0;
+                v_in = (int)(ac_voltage_rms_input(1) * input_cal);
+                if (v_in < 100 || v_in > 1000)
+                {
+                    v_in = 0;
+                }
+                ++voltage_count;
             }
-						++voltage_count;
-						}
-						
-						else if(voltage_count == 2) {
-            v_in = (int)(ac_voltage_rms_input(1) * input_cal);
-							 if (v_in < 100 || v_in > 1000)
+
+            else if (voltage_count == 2)
             {
-                v_in = 0;
+                v_con = (int)(ac_voltage_rms_input(2));
+                
+                ++voltage_count;
             }
-						++voltage_count;
-						}
-						else if(voltage_count == 3) {
-            v_in = (int)(ac_voltage_rms_input(1) * input_cal);
-							 if (v_in < 100 || v_in > 1000)
+            else if (voltage_count == 3)
             {
-                v_in = 0;
+                v_earth = (int)(ac_voltage_rms_input(3));
+                
+                voltage_count = 1;
             }
-						voltage_count = 1;
-						}
-					
+
             i_rms = (ac_current_rms()) * current_cal;
-					
-					
-           
-            if (i_rms <1.2)       {
-                //i_rms=0;
+
+            if (i_rms < 1.2)
+            {
+                // i_rms=0;
             }
-						          pod_delay = (int)(config.on_delay  * 5);
-					            time_count_error = 5;
-						          on_second = (int)(pod_delay/5);
+
             EA = 1;
-					
-						
+
             if (error_count > 110 && v_in > 170 && v_in < 270)
             {
-                //trip(1); // motor side detection
+                // trip(1); // motor side detection
                 error_count = 0;
             }
 
@@ -1323,13 +1414,13 @@ on_second = (int)(pod_delay/5);
             }
             // error_count = 0;
         }
-				else if(on_status == 1) {
-					 pod_delay = (int)(config.on_delay  * 10);
-					time_count_error = 10;
-					on_second = (int)(pod_delay/10);
-				 EA=1;
-					
-				}
+        else if (on_status == 1)
+        {
+            pod_delay = (int)(config.on_delay * 12);
+            time_count_error = 12;
+            on_second = (int)(pod_delay / 12);
+            EA = 1;
+        }
         else
         {
             if (error_count > 20)
@@ -1337,18 +1428,17 @@ on_second = (int)(pod_delay/5);
             ++error_count;
         }
 
-        //printf("The voltage is %d \n", v_out); // For output voltage print
-        // printf("The current is %0.3f \n",i_rms);
-        // printf("The error is %d \n",(int)error); //For Error Print
-        // if (v_out > OUTPUT_LOW && v_out < OUTPUT_HIGH && v_in < INPUT_HIGH && v_in > INPUT_LOW && i_rms < OVERCURRENT && start_flag==1)
-				
+        // printf("The voltage is %d \n", v_out); // For output voltage print
+        //  printf("The current is %0.3f \n",i_rms);
+        //  printf("The error is %d \n",(int)error); //For Error Print
+        //  if (v_out > OUTPUT_LOW && v_out < OUTPUT_HIGH && v_in < INPUT_HIGH && v_in > INPUT_LOW && i_rms < OVERCURRENT && start_flag==1)
 
         //-----------------------manual------------
 
         if (aut == 0 && ui_state == UI_NORMAL)
         {
 
-            if (UP==1)
+            if (UP == 1)
             {
                 P01 = 1;
                 P12 = 0;
@@ -1374,102 +1464,133 @@ on_second = (int)(pod_delay/5);
             error_code = 1;
             trip(6);
         }
-				else if(v_out < out_low && o_low == 0) {
-					error_code = 1;
-				 trip(5);
-				}
+        else if (v_out < out_low && o_low == 0)
+        {
+            error_code = 1;
+            trip(5);
+        }
         else if (v_in > in_high && i_high == 0)
         {
-					error_code = 1;
+            error_code = 1;
             trip(2);
         }
-				else if(v_in < in_low && i_low == 0) {
-					error_code = 1;
-				   trip(4);
-				}
+        else if (v_in < in_low && i_low == 0)
+        {
+            error_code = 1;
+            trip(4);
+        }
+        
+        else if (i_rms > ol2)
+        {
+            trip(7);
+        }
         else if (i_rms > ol1)
         {
             trip(3);
         }
-				else if(i_rms > ol2) {
-				    trip(7);
-				}
+        else if(start_flag == 1 && relay_flag == 1 && v_out > 180 && v_con < 100 && config.con == 1) {
+
+              trip(8);
+        }
+				else if(config.earth_onoff == 1 && v_earth > earth_cutoff) {
+
+              trip(9);
+        }
         else if (start_flag == 1)
         {
-                      trip_count = 0;
-					  error_code = 0;
-                      P00 = 0;
-					
-					  if(i_high == 1) {
-							
-							if(v_in < (in_high - 20)) {
-									relay_flag = 1;
-								  i_high = 0;
-							}
-						}
-							
-							else if(i_low == 1) {
-							if(v_in > (in_low + 25)) {
-									relay_flag = 1;
-								  i_low = 0;
-							}
-						}
+            trip_count = 0;
+            error_code = 0;
+            P00 = 0;
 
-                        else if(o_high == 1) {
-							
-							if(v_out < (out_high - 10)) {
-									relay_flag = 1;
-								  o_high = 0;
-							}
-						}
+            if (i_high == 1)
+            {
 
-                       else if(o_low == 1) {
-							
-							if(v_out > (out_low + 10)) {
-									relay_flag = 1;
-								  o_low=0;
-							}
-						} 
-                        else {
-                            relay_flag =1;
-                        }
-						}
-					 
+                if (v_in < (in_high - 20))
+                {
+                    relay_flag = 1;
+                    LED_Control(LED_HILO, 0);
+                    i_high = 0;
+                }
+            }
+
+            else if (i_low == 1)
+            {
+                if (v_in > (in_low + 25))
+                {
+                    relay_flag = 1;
+                    LED_Control(LED_HILO, 0);
+                    i_low = 0;
+                }
+            }
+
+            else if (o_high == 1)
+            {
+
+                if (v_out < (out_high - 10))
+                {
+                    relay_flag = 1;
+                    LED_Control(LED_HILO, 0);
+                    o_high = 0;
+                }
+            }
+
+            else if (o_low == 1)
+            {
+
+                if (v_out > (out_low + 10))
+                {
+                    relay_flag = 1;
+                    LED_Control(LED_HILO, 0);
+                    o_low = 0;
+                }
+            }
+            else
+            {
+                relay_flag = 1;
+            }
+        }
+
         else
         {
-					  error_code = 0;
+            error_code = 0;
             trip_count = 0;
-
-            
         }
-				
+
         P17 = relay_flag;
+        LED_Control(LED_OUT, relay_flag);
 
         if (display_update_flag && on_status == 0)
         {
             display_update_flag = 0;
 
-            if (ui_state == UI_NORMAL && error_code == 0 )
+            if (ui_state == UI_NORMAL && error_code == 0)
             {
-							 LED_Control(LED_IP,1);
+                LED_Control(LED_AUTO, config.auto_status);
+
                 switch (counter_display)
                 {
-                case 0:
-                    TM1637_DisplayString("IP");
-                    break;
-                case 1:
+
+                
+                case 0:	  
+								     LED_Control(LED_OP,0);
+								     LED_Control(LED_OA, 0);
+								     LED_Control(LED_IP, 1);
                     TM1637_DisplayNumber((unsigned int)v_in);
                     break;
-                case 2:
-                    TM1637_DisplayString("OP");
-                    break;
-                case 3:
+               
+                case 1:
+                     
+								     LED_Control(LED_OA, 0);
+								     LED_Control(LED_IP, 0);
+								     LED_Control(LED_OP,1);
                     TM1637_DisplayNumber((unsigned int)v_out);
                     break;
-                case 4:
-                    TM1637_DisplayString("OA");
-                    break;
-                case 5:
+              
+                case 2:
+									   LED_Control(LED_IP, 0);
+								     LED_Control(LED_OP,0);
+									   LED_Control(LED_OA, 1);
+								     
                     TM1637_DisplayCurrent(i_rms);
                     break;
                 }
@@ -1490,17 +1611,17 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayString("MOD");
                     if (key_set_pressed())
                     {
-                         
+
                         ui_state = AUT_ON;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = US;
                     }
                     if (key_down_pressed())
                     {
-                         
+
                         ui_state = UI_EXIT;
                     }
                     break;
@@ -1508,19 +1629,20 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayString("AT");
                     if (key_set_pressed())
                     {
-                         
+
                         config.auto_status = 1;
                         aut = 1;
+                        LED_Control(LED_AUTO, config.auto_status);
                         ui_state = AUT;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = AUT_OFF;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = AUT_OFF;
                     }
                     break;
@@ -1529,40 +1651,41 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayString("MN");
                     if (key_set_pressed())
                     {
-                         
+
                         config.auto_status = 0;
                         aut = 0;
+                        LED_Control(LED_AUTO, config.auto_status);
                         ui_state = AUT;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = AUT_ON;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = AUT_ON;
                     }
                     break;
 
                 case US:
-                    TM1637_DisplayString("U.ST");//U.St
+                    TM1637_DisplayString("U.ST"); // U.St
                     if (key_set_pressed())
                     {
-                         
+
                         temp = 0;
-                        set_max_min(1000,0);
+                        set_max_min(1000, 0);
                         ui_state = US_PASSWORD;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = FS;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = AUT;
                     }
                     break;
@@ -1571,28 +1694,28 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayNumber((unsigned int)temp);
                     if (key_set_pressed() && temp == 5)
                     {
-                         
+
                         ui_state = SOP;
                     }
                     break;
 
                 case SOP:
-                    TM1637_DisplayString("S.OP");//S.OP
+                    TM1637_DisplayString("S.OP"); // S.OP
                     if (key_set_pressed())
                     {
-                         
+
                         temp = config.target_voltage;
-                        set_max_min(MAX_TARGET_VOLTAGE,MIN_TARGET_VOLTAGE);
+                        set_max_min(MAX_TARGET_VOLTAGE, MIN_TARGET_VOLTAGE);
                         ui_state = TARGET_VOLTAGE;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = POD;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = UI_US_EXIT;
                     }
                     break;
@@ -1601,7 +1724,7 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayNumber((unsigned int)temp);
                     if (key_set_pressed())
                     {
-                         
+
                         config.target_voltage = temp;
                         target = temp;
                         ui_state = SOP;
@@ -1609,23 +1732,22 @@ on_second = (int)(pod_delay/5);
                     break;
 
                 case POD:
-                    TM1637_DisplayString("DLY"); //DLY
+                    TM1637_DisplayString("DLY"); // DLY
                     if (key_set_pressed())
                     {
-                         
+
                         temp = config.on_delay;
-                        set_max_min(MAX_ON_DELAY,MIN_ON_DELAY);
+                        set_max_min(MAX_ON_DELAY, MIN_ON_DELAY);
                         ui_state = ON_DELAY_SET;
-                        
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = IPL;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = SOP;
                     }
                     break;
@@ -1634,30 +1756,30 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayNumber((unsigned int)temp);
                     if (key_set_pressed())
                     {
-                         
+
                         config.on_delay = temp;
-											  pod_delay = (int)(config.on_delay  * 4.16);
+                        pod_delay = (int)(config.on_delay * 4.16);
                         ui_state = POD;
                     }
                     break;
 
                 case IPL:
-                    TM1637_DisplayString("IP.L"); //IP.L
+                    TM1637_DisplayString("IP.L"); // IP.L
                     if (key_set_pressed())
                     {
-                         
+
                         temp = config.input_low;
-                        set_max_min(target - MAX_INPUT_LOW,MIN_INPUT_LOW);
+                        set_max_min(target - MAX_INPUT_LOW, MIN_INPUT_LOW);
                         ui_state = INPUT_LOW_SET;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = IN_HIGH;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = POD;
                     }
                     break;
@@ -1666,7 +1788,7 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayNumber((unsigned int)temp);
                     if (key_set_pressed())
                     {
-                         
+
                         config.input_low = temp;
                         in_low = temp;
                         ui_state = IPL;
@@ -1674,22 +1796,22 @@ on_second = (int)(pod_delay/5);
                     break;
 
                 case IN_HIGH:
-                    TM1637_DisplayString("IP.H"); //IP.H
+                    TM1637_DisplayString("IP.H"); // IP.H
                     if (key_set_pressed())
                     {
-                         
+
                         temp = config.input_high;
-                        set_max_min(MAX_INPUT_HIGH,target + MIN_INPUT_HIGH);
+                        set_max_min(MAX_INPUT_HIGH, target + MIN_INPUT_HIGH);
                         ui_state = INPUT_HIGH_SET;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = OPL;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = IPL;
                     }
                     break;
@@ -1698,7 +1820,7 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayNumber((unsigned int)temp);
                     if (key_set_pressed())
                     {
-                         
+
                         config.input_high = temp;
                         in_high = temp;
                         ui_state = IN_HIGH;
@@ -1706,22 +1828,22 @@ on_second = (int)(pod_delay/5);
                     break;
 
                 case OPL:
-                    TM1637_DisplayString("OP.L"); //OP.L
+                    TM1637_DisplayString("OP.L"); // OP.L
                     if (key_set_pressed())
                     {
-                         
+
                         temp = config.output_low;
-                         set_max_min(target - MAX_OUTPUT_LOW,MIN_OUTPUT_LOW);
+                        set_max_min(target - MAX_OUTPUT_LOW, MIN_OUTPUT_LOW);
                         ui_state = OUTPUT_LOW_SET;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = OPH;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = IN_HIGH;
                     }
                     break;
@@ -1730,7 +1852,7 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayNumber((unsigned int)temp);
                     if (key_set_pressed())
                     {
-                         
+
                         config.output_low = temp;
                         out_low = temp;
                         ui_state = OPL;
@@ -1738,22 +1860,22 @@ on_second = (int)(pod_delay/5);
                     break;
 
                 case OPH:
-                    TM1637_DisplayString("OP.H"); //OP.H
+                    TM1637_DisplayString("OP.H"); // OP.H
                     if (key_set_pressed())
                     {
-                         
+
                         temp = config.output_high;
-                         set_max_min(MAX_OUTPUT_HIGH,target + MIN_OUTPUT_HIGH);
+                        set_max_min(MAX_OUTPUT_HIGH, target + MIN_OUTPUT_HIGH);
                         ui_state = OUTPUT_HIGH_SET;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = HLT;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = OPL;
                     }
                     break;
@@ -1762,7 +1884,7 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayNumber((unsigned int)temp);
                     if (key_set_pressed())
                     {
-                         
+
                         config.output_high = temp;
                         out_high = temp;
                         ui_state = OPH;
@@ -1770,22 +1892,22 @@ on_second = (int)(pod_delay/5);
                     break;
 
                 case HLT:
-                    TM1637_DisplayString("HL.T"); //HL.T
+                    TM1637_DisplayString("HL.T"); // HL.T
                     if (key_set_pressed())
                     {
-                         
+
                         temp = config.hlt_delay;
-											set_max_min(60,0);
+                        set_max_min(60, 0);
                         ui_state = HLT_DELAY_SET;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = DIS;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = OPH;
                     }
                     break;
@@ -1794,7 +1916,7 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayNumber((unsigned int)temp);
                     if (key_set_pressed())
                     {
-                         
+
                         config.hlt_delay = temp;
                         hlt = (int)(temp * 4.44);
                         ui_state = HLT;
@@ -1805,18 +1927,18 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayString("DIS");
                     if (key_set_pressed())
                     {
-                         
+
                         temp = 5;
                         ui_state = INPUT_VOLTAGE;
                     }
                     if (key_up_pressed())
                     {
-                         
-                        ui_state = BUR;
+
+                        ui_state = CON;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = HLT;
                     }
                     break;
@@ -1825,19 +1947,19 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayString("IP");
                     if (key_set_pressed())
                     {
-                         
+
                         config.dis = 1;
                         set_dis();
                         ui_state = DIS;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = OP;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = ALL;
                     }
                     break;
@@ -1846,139 +1968,227 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayString("OP");
                     if (key_set_pressed())
                     {
-                         
+
                         config.dis = 2;
                         set_dis();
                         ui_state = DIS;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = OA;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = IP;
                     }
                     break;
 
                 case OA:
-                    TM1637_DisplayString("CUR"); //CUR
+                    TM1637_DisplayString("CUR"); // CUR
                     if (key_set_pressed())
                     {
-                         
+
                         config.dis = 3;
                         set_dis();
                         ui_state = DIS;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = ALL;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = OP;
                     }
                     break;
 
                 case ALL:
-                    TM1637_DisplayString("ALL"); 
+                    TM1637_DisplayString("ALL");
                     if (key_set_pressed())
                     {
-                         
+
                         config.dis = 4;
                         set_dis();
                         ui_state = DIS;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = INPUT_VOLTAGE;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = OA;
                     }
                     break;
 
-                case BUR:
-                    TM1637_DisplayString("BUR");
+                case CON:
+                    TM1637_DisplayString("CON");
                     if (key_set_pressed())
                     {
-                         
-                        ui_state = BUR_ON;
+
+                        ui_state = CON_ON;
                     }
                     if (key_up_pressed())
                     {
-                         
-                        ui_state = UI_US_EXIT;
+
+                        ui_state = EARTH;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = DIS;
                     }
                     break;
-                case BUR_ON:
+                case CON_ON:
                     TM1637_DisplayString("ON");
                     if (key_set_pressed())
                     {
-                         
-                        config.bur = 1;
-                        ui_state = BUR;
+
+                        config.con = 1;
+                        ui_state = CON;
                     }
                     if (key_up_pressed())
                     {
-                         
-                        ui_state = BUR_OFF;
+
+                        ui_state = CON_OFF;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
-                        ui_state = BUR_OFF;
+
+                        ui_state = CON_OFF;
                     }
                     break;
-                case BUR_OFF:
+                case CON_OFF:
                     TM1637_DisplayString("OFF");
                     if (key_set_pressed())
                     {
-                         
-                        config.bur = 0;
-                        ui_state = BUR;
+
+                        config.con = 0;
+                        ui_state = CON;
                     }
                     if (key_up_pressed())
                     {
-                         
-                        ui_state = BUR_ON;
+
+                        ui_state = CON_ON;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
-                        ui_state = BUR_ON;
+
+                        ui_state = CON_ON;
+                    }
+                    break;
+										
+										case EARTH:
+                    TM1637_DisplayString("Ert");
+                    if (key_set_pressed())
+                    {
+
+                        ui_state = EARTH_ON;
+                    }
+                    if (key_up_pressed())
+                    {
+
+                        ui_state = UI_US_EXIT;
+                    }
+                    if (key_down_pressed())
+                    {
+
+                        ui_state = DIS;
+                    }
+                    break;
+                case EARTH_ON:
+                    TM1637_DisplayString("ON");
+                    if (key_set_pressed())
+                    {
+
+                        config.earth_onoff = 1;
+                        ui_state = EARTH;
+                    }
+                    if (key_up_pressed())
+                    {
+
+                        ui_state = EARTH_OFF;
+                    }
+                    if (key_down_pressed())
+                    {
+
+                        ui_state = EARTH_OFF;
+                    }
+                    break;
+                case EARTH_OFF:
+                    TM1637_DisplayString("OFF");
+                    if (key_set_pressed())
+                    {
+
+                         config.earth_onoff = 0;
+                        ui_state = EARTH;
+                    }
+                    if (key_up_pressed())
+                    {
+
+                        ui_state = EARTH_ON;
+                    }
+                    if (key_down_pressed())
+                    {
+
+                        ui_state = EARTH_ON;
+                    }
+                    break;
+										case EARTH_HIGH:
+                    TM1637_DisplayString("E.HI"); // OP.H
+                    if (key_set_pressed())
+                    {
+
+                        temp = config.earth_trip;
+                        set_max_min(50,10);
+                        ui_state = EARTH_HIGH_SET;
+                    }
+                    if (key_up_pressed())
+                    {
+
+                        ui_state = UI_US_EXIT;
+                    }
+                    if (key_down_pressed())
+                    {
+
+                        ui_state = EARTH;
+                    }
+                    break;
+
+                case EARTH_HIGH_SET:
+                    TM1637_DisplayNumber((unsigned int)temp);
+                    if (key_set_pressed())
+                    {
+
+                        config.earth_trip = temp;
+                        earth_cutoff = temp;
+                        ui_state = EARTH_HIGH;
                     }
                     break;
 
                 case FS:
-                    TM1637_DisplayString("F.ST"); //F.ST
+                    TM1637_DisplayString("F.ST"); // F.ST
                     if (key_set_pressed())
                     {
-                         
+
                         temp = 999;
-                         set_max_min(1000,0);
+                        set_max_min(1000, 0);
                         ui_state = FS_PASSWORD;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = UI_EXIT;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = US;
                     }
                     break;
@@ -1987,28 +2197,28 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayNumber((unsigned int)temp);
                     if (key_set_pressed() && temp == 998)
                     {
-                         
+
                         ui_state = REG;
                     }
                     break;
 
                 case REG:
-                    TM1637_DisplayString("S.RG"); //S.RG
+                    TM1637_DisplayString("S.RG"); // S.RG
                     if (key_set_pressed())
                     {
-                         
+
                         temp = config.regulation;
-                         set_max_min(MAX_REG,MIN_REG);
+                        set_max_min(MAX_REG, MIN_REG);
                         ui_state = REGULATION_SET;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = OLR;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = UI_FS_EXIT;
                     }
                     break;
@@ -2017,7 +2227,7 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayNumber((unsigned int)temp);
                     if (key_set_pressed())
                     {
-                         
+
                         config.regulation = temp;
                         band_inc = temp;
                         band_dec = (-1) * temp;
@@ -2026,20 +2236,20 @@ on_second = (int)(pod_delay/5);
                     break;
 
                 case OLR:
-                    TM1637_DisplayString("OL.R"); //OL.R
+                    TM1637_DisplayString("OL.R"); // OL.R
                     if (key_set_pressed())
                     {
-                         
+
                         ui_state = OLR_ON;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = OL1;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = REG;
                     }
                     break;
@@ -2047,18 +2257,18 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayString("AT");
                     if (key_set_pressed())
                     {
-                         
+
                         config.olr = 1;
                         ui_state = OLR;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = OLR_OFF;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = OLR_OFF;
                     }
                     break;
@@ -2066,39 +2276,39 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayString("MN");
                     if (key_set_pressed())
                     {
-                         
+
                         config.olr = 0;
                         ui_state = OLR;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = OLR_ON;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = OLR_ON;
                     }
                     break;
 
                 case OL1:
-                    TM1637_DisplayString("S.OL"); //S.OL
+                    TM1637_DisplayString("S.OL"); // S.OL
                     if (key_set_pressed())
                     {
-                         
+
                         temp = config.ol1;
-                        set_max_min(MAX_OL1,MIN_OL1);
+                        set_max_min(MAX_OL1, MIN_OL1);
                         ui_state = OL1_SET;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = OLT;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = OLR;
                     }
                     break;
@@ -2107,31 +2317,31 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayNumber((unsigned int)temp);
                     if (key_set_pressed())
                     {
-                         
+
                         config.ol1 = temp;
-											  ol1 = temp;
+                        ol1 = temp;
                         config.ol2 = temp + 3;
                         ui_state = OL1;
                     }
                     break;
 
                 case OLT:
-                    TM1637_DisplayString("OL.T"); //OL.T
+                    TM1637_DisplayString("OL.T"); // OL.T
                     if (key_set_pressed())
                     {
-                         
+
                         temp = config.olt;
-                        set_max_min(MAX_OL1_TIME,MIN_OL1_TIME);
+                        set_max_min(MAX_OL1_TIME, MIN_OL1_TIME);
                         ui_state = OLT_SET;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = OL2;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = OL1;
                     }
                     break;
@@ -2140,29 +2350,29 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayNumber((unsigned int)temp);
                     if (key_set_pressed())
                     {
-                         
+
                         config.olt = temp;
-											  olt = (int)(config.olt * 4.44);
+                        olt = (int)(config.olt * 4.44);
                         ui_state = OLT;
                     }
                     break;
 
                 case OL2:
-                    TM1637_DisplayString("OL2"); 
+                    TM1637_DisplayString("OL2");
                     if (key_set_pressed())
                     {
-                         
+
                         temp = config.ol2;
                         ui_state = OL2_SET;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = IPC;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = OLT;
                     }
                     break;
@@ -2171,7 +2381,7 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayNumber((unsigned int)temp);
                     if (key_set_pressed())
                     {
-                         
+
                         config.ol2 = temp;
                         ol2 = temp;
                         ui_state = OL2;
@@ -2179,23 +2389,23 @@ on_second = (int)(pod_delay/5);
                     break;
 
                 case IPC:
-                    TM1637_DisplayString("C.IP"); //C.IP
+                    TM1637_DisplayString("C.IP"); // C.IP
                     if (key_set_pressed())
                     {
-                         
-					   v_in_raw = (int)(ac_voltage_rms_input(1));
+
+                        v_in_raw = (int)(ac_voltage_rms_input(1));
                         temp = v_in_raw;
-                        set_max_min(1000,0);
+                        set_max_min(1000, 0);
                         ui_state = IPC_SET;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = OPC;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = OL2;
                     }
                     break;
@@ -2204,7 +2414,7 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayNumber((unsigned int)temp);
                     if (key_set_pressed())
                     {
-                         
+
                         config.ipc = (((float)temp) / v_in_raw);
                         input_cal = config.ipc;
                         ui_state = IPC;
@@ -2212,23 +2422,23 @@ on_second = (int)(pod_delay/5);
                     break;
 
                 case OPC:
-                    TM1637_DisplayString("C.OP"); //C.OP
+                    TM1637_DisplayString("C.OP"); // C.OP
                     if (key_set_pressed())
                     {
-                         
-											 v_out_raw = (int)(ac_voltage_rms_input(0));
+
+                        v_out_raw = (int)(ac_voltage_rms_input(0));
                         temp = 230;
-                         set_max_min(1000,0);
+                        set_max_min(1000, 0);
                         ui_state = OPC_SET;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = OAC;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = IPC;
                     }
                     break;
@@ -2237,43 +2447,43 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayNumber((unsigned int)temp);
                     if (key_set_pressed())
                     {
-                         
-                        config.opc = (float)(((float)temp) /v_out_raw);
+
+                        config.opc = (float)(((float)temp) / v_out_raw);
                         output_cal = config.opc;
                         ui_state = OPC;
                     }
                     break;
 
                 case OAC:
-                    TM1637_DisplayString("C.CU"); //C.CU
+                    TM1637_DisplayString("C.CU"); // C.CU
                     if (key_set_pressed())
                     {
-                         
+
                         temp = ac_current_rms();
-                         set_max_min(1000,0);
+                        set_max_min(1000, 0);
                         ui_state = OAC_SET;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = UI_FS_EXIT;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = OPC;
                     }
                     break;
 
                 case OAC_SET:
-                    //TM1637_DisplayNumber((unsigned int)temp);
-								    TM1637_DisplayCurrent((float)temp/10);
+                    // TM1637_DisplayNumber((unsigned int)temp);
+                    TM1637_DisplayCurrent((float)temp / 10);
                     if (key_set_pressed())
                     {
-                        if(i_rms > 0.01)
-{
-    config.oac = (float)temp / i_rms;
-} 
+                        if (i_rms > 0.01)
+                        {
+                            config.oac = (float)temp / i_rms;
+                        }
                         current_cal = config.oac;
                         ui_state = OAC;
                     }
@@ -2283,7 +2493,7 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayString("-E-");
                     if (key_set_pressed())
                     {
-                         
+
                         setting_press = 0;
                         Save_Config();
                         ui_state = UI_NORMAL;
@@ -2291,12 +2501,12 @@ on_second = (int)(pod_delay/5);
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = AUT;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = FS;
                     }
                     break;
@@ -2305,18 +2515,18 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayString("END");
                     if (key_set_pressed())
                     {
-                         
+
                         ui_state = US;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = SOP;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
-                        ui_state = BUR;
+
+                        ui_state = CON;
                     }
                     break;
 
@@ -2324,51 +2534,60 @@ on_second = (int)(pod_delay/5);
                     TM1637_DisplayString("END");
                     if (key_set_pressed())
                     {
-                         
+
                         ui_state = FS;
                     }
                     if (key_up_pressed())
                     {
-                         
+
                         ui_state = REG;
                     }
-                    if ( key_down_pressed())
+                    if (key_down_pressed())
                     {
-                         
+
                         ui_state = OAC;
                     }
                 }
 
                 if (UP == 1)
                 {
-                     ++up_counter;
-                      menu_counter=0;
-                     if(up_counter > 50 && temp < max_number) {
+                    ++up_counter;
+                    menu_counter = 0;
+                    if (up_counter > 50 && temp < max_number)
+                    {
                         ++temp;
-                     } 
-                     else if(up_counter%4 == 0 && temp < max_number){
-                      ++temp;
-                     }
-                   
+                    }
+                    else if (up_counter % 4 == 0 && temp < max_number)
+                    {
+                        ++temp;
+                    }
                 }
                 else if (DOWN == 1)
                 {
-                      ++down_counter;
-                       menu_counter=0;
-                     if(down_counter > 50 && temp > min_number) {
+                    ++down_counter;
+                    menu_counter = 0;
+                    if (down_counter > 50 && temp > min_number)
+                    {
                         --temp;
-                     } 
-                     else if(down_counter%4 == 0 && temp > min_number){
-                      --temp;
-                     }
-                   
+                    }
+                    else if (down_counter % 4 == 0 && temp > min_number)
+                    {
+                        --temp;
+                    }
                 }
-                if(UP==0) {up_counter=0;}
-                if(DOWN==0) {down_counter=0;}
-                if(menu_counter > 130) {
-                    menu_counter=0;
+                if (UP == 0)
+                {
+                    up_counter = 0;
+                }
+                if (DOWN == 0)
+                {
+                    down_counter = 0;
+                }
+                if (menu_counter > 130)
+                {
+                    menu_counter = 0;
                     update_rate = 20;
-                  ui_state = UI_NORMAL;  
+                    ui_state = UI_NORMAL;
                 }
             }
         }
