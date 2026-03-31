@@ -239,7 +239,7 @@ ui_state_t ui_state;
 #define SEG_J 0x1E
 // #define SEG_K 0x75 // approx
 #define SEG_L 0x38
-// #define SEG_M 0x37 // approx
+#define SEG_M 0x37 // approx
 #define SEG_N 0x54
 #define SEG_O 0x3F
 #define SEG_P 0x73
@@ -317,6 +317,8 @@ unsigned char TM1637_CharToSeg(char c)
         return SEG_T;
     case 'U':
         return SEG_U;
+        case 'M':
+        return SEG_M;
 
     case '-':
         return SEG_DASH;
@@ -1256,7 +1258,7 @@ void set_parameter()
     input_cal = config.ipc;
     output_cal = config.opc;
     current_cal = config.oac;
-	  earth_cutoff = config.earth_trip;
+	earth_cutoff = config.earth_trip;
 }
 
 //-----------------------------------------------------------------------------------
@@ -2084,7 +2086,7 @@ void main(void)
                     }
                     break;
 										
-										case EARTH:
+					case EARTH:
                     TM1637_DisplayString("Ert");
                     if (key_set_pressed())
                     {
@@ -2094,7 +2096,7 @@ void main(void)
                     if (key_up_pressed())
                     {
 
-                        ui_state = UI_US_EXIT;
+                        ui_state = EARTH_HIGH;
                     }
                     if (key_down_pressed())
                     {
@@ -2482,7 +2484,7 @@ void main(void)
                     {
                         if (i_rms > 0.01)
                         {
-                            config.oac = (float)temp / i_rms;
+                            config.oac = (float)temp / (i_rms * 10);
                         }
                         current_cal = config.oac;
                         ui_state = OAC;
