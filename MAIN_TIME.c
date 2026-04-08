@@ -10,6 +10,7 @@
 #define SETTING P30
 #define UP P11
 #define DOWN P10
+#define HOME P02
 //--------------------------------------------------------------------------------
 
 //-------------------------LED_TYPES----------------------------------------------
@@ -251,7 +252,7 @@ ui_state_t ui_state;
 // #define SEG_V 0x3E // same as U
 // #define SEG_W 0x2A // approx
 // #define SEG_X 0x76 // same as H
-// #define SEG_Y 0x6E
+#define SEG_Y 0x6E
 // #define SEG_Z 0x5B // same as 2
 
 #define SEG_DASH 0x40  // -
@@ -319,6 +320,8 @@ unsigned char TM1637_CharToSeg(char c)
         return SEG_U;
         case 'M':
         return SEG_M;
+				 case 'Y':
+        return SEG_Y;
 
     case '-':
         return SEG_DASH;
@@ -380,12 +383,12 @@ unsigned char led_state = 0;
 #define ADC_MAX 4095.0
 #define ADC_REF_VOLT 5.00
 // #define ADC_OFFSET 1.649
-#define ADC_OFFSET 2.47 // 2.47
+#define ADC_OFFSET 2.5 // 2.47 , 2.5
 // #define GAIN_FACTOR 0.000202020
 #define GAIN_FACTOR 0.002222
 #define SAMPLE_COUNT 402 // 402
 
-#define CUR_ADC_OFFSET 2.5 // 2.10
+#define CUR_ADC_OFFSET 2.47 // 2.10 , 2.47
 #define BURDEN_GAIN 36.0
 #define CURRENT_SAMPLES 101
 
@@ -782,7 +785,7 @@ void trip(char n)
             EA = 0;
             while (UP == 0)
             {
-                TM1637_DisplayString("E-01");
+                TM1637_DisplayString("E01");
                 P00 = 1;
                 Timer2_Delay(24000000, 13, 500);
                 P00 = 0;
@@ -804,11 +807,14 @@ void trip(char n)
             break;
 
         case 2:
-            ++disp_update_error;
-            LED_Control(LED_HILO, 1);
+            
+           
+					if(trip_count > 5) {
+						LED_Control(LED_HILO, 1);
+						++disp_update_error;
             if (disp_update_error < 6)
             {
-                TM1637_DisplayString("E-02");
+                TM1637_DisplayString("E02");
             }
             else if (disp_update_error < 12)
             {
@@ -818,6 +824,7 @@ void trip(char n)
             {
                 disp_update_error = 0;
             }
+					}
             if (trip_count > hlt)
             { // 40 9sec
                 i_high = 1;
@@ -843,7 +850,7 @@ void trip(char n)
                 trip_flag = 1;
                 while (UP != 1 && delay_temp < 130)
                 {
-                    TM1637_DisplayString("OL-1");
+                    TM1637_DisplayString("OL1");
 
                     timer_20ms = 0;
                     while (timer_20ms < 100)
@@ -874,12 +881,14 @@ void trip(char n)
             break;
 
         case 4:
-            LED_Control(LED_OVL, 1);
-            ++disp_update_error;
-            LED_Control(LED_HILO, 1);
+           
+           
+					if(trip_count > 5) {
+						 LED_Control(LED_HILO, 1);
+						 ++disp_update_error;
             if (disp_update_error < 6)
             {
-                TM1637_DisplayString("E-03");
+                TM1637_DisplayString("E03");
             }
             else if (disp_update_error < 12)
             {
@@ -889,6 +898,7 @@ void trip(char n)
             {
                 disp_update_error = 0;
             }
+					}
             if (trip_count > hlt)
             { // 40 9sec
                 i_low = 1;
@@ -903,11 +913,16 @@ void trip(char n)
             break;
 
         case 5:
-            ++disp_update_error;
-            LED_Control(LED_HILO, 1);
-            if (disp_update_error < 6)
+            
+           
+				
+				if(trip_count > 5) {
+					 LED_Control(LED_HILO, 1);
+				++disp_update_error;
+				
+            if (disp_update_error < 6 )
             {
-                TM1637_DisplayString("E-04");
+                TM1637_DisplayString("E04");
             }
             else if (disp_update_error < 12)
             {
@@ -917,6 +932,8 @@ void trip(char n)
             {
                 disp_update_error = 0;
             }
+				}
+				    
             if (trip_count > hlt)
             { // 40 9sec
                 P00 = 0;
@@ -930,11 +947,14 @@ void trip(char n)
             break;
 
         case 6:
-            ++disp_update_error;
-            LED_Control(LED_HILO, 1);
+            
+           
+					if(trip_count > 5) {
+						 LED_Control(LED_HILO, 1);
+						++disp_update_error;
             if (disp_update_error < 6)
             {
-                TM1637_DisplayString("E-05");
+                TM1637_DisplayString("E05");
             }
             else if (disp_update_error < 12)
             {
@@ -944,6 +964,7 @@ void trip(char n)
             {
                 disp_update_error = 0;
             }
+					}
             if (trip_count > hlt)
             { // 40 9sec
                 P00 = 0;
@@ -957,7 +978,8 @@ void trip(char n)
             break;
 
         case 7:
-
+   if (trip_count > 4)
+            {
             P17 = 0;
             P00 = 0;
             P01 = 1;
@@ -967,7 +989,7 @@ void trip(char n)
             delay_temp = 0;
             while (UP != 1 && delay_temp < 130)
             {
-                TM1637_DisplayString("OL-2");
+                TM1637_DisplayString("OL2");
 
                 timer_20ms = 0;
                 while (timer_20ms < 100)
@@ -988,6 +1010,7 @@ void trip(char n)
             relay_flag = 0;
             counter_display = 1;
 						LED_Control(LED_DELAY,1);
+					}
             break;
 
             case 8:
@@ -1035,7 +1058,7 @@ void trip(char n)
 						
             if (disp_update_error < 6)
             {
-                TM1637_DisplayString("E-06");
+                TM1637_DisplayString("E06");
             }
             else if (disp_update_error < 12)
             {
@@ -1290,6 +1313,7 @@ void main(void)
     P15_INPUT_MODE;
     P11_INPUT_MODE;
     P10_INPUT_MODE;
+	  P02_INPUT_MODE;
     P30_INPUT_MODE;
 
     P12 = 1;
@@ -1392,16 +1416,16 @@ void main(void)
 
             i_rms = (ac_current_rms()) * current_cal;
 
-            if (i_rms < 1.2)
+            if (i_rms < 0.8)
             {
-                // i_rms=0;
+                i_rms=0;
             }
 
             EA = 1;
 
-            if (error_count > 110 && v_in > 170 && v_in < 270)
+            if (error_count > 110 && v_in > 140 && v_in < 270)
             {
-                // trip(1); // motor side detection
+                trip(1); // motor side detection
                 error_count = 0;
             }
 
@@ -1549,6 +1573,8 @@ void main(void)
             else
             {
                 relay_flag = 1;
+							   LED_Control(LED_HILO, 0);
+							    LED_Control(LED_OVL, 0);
             }
         }
 
@@ -1606,6 +1632,12 @@ void main(void)
             else
             {
                 ++menu_counter;
+							
+							if(HOME == 1) {
+							         // ui_state = UI_NORMAL;
+                        //update_rate = 20;
+							
+							}
                 switch (ui_state)
                 {
 
@@ -2087,7 +2119,7 @@ void main(void)
                     break;
 										
 					case EARTH:
-                    TM1637_DisplayString("Ert");
+                    TM1637_DisplayString("S.ER");
                     if (key_set_pressed())
                     {
 
