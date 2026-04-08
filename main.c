@@ -5,12 +5,12 @@
 //----------------------------------------------------------------------------
 
 //----------------------------Pin Defination-------------------------------------
-#define TM_CLK P13 // TM1637 CLK
-#define TM_DIO P14 // TM1637 DIO
-#define SETTING P30
-#define UP P11
-#define DOWN P10
-#define HOME P02
+#define TM1637_CLK_PIN P13 // TM1637 CLK
+#define TM1637_DIO_PIN P14 // TM1637 DIO
+#define BTN_SET P30
+#define BTN_UP P11
+#define BTN_DOWN P10
+#define BTN_HOME P02
 //--------------------------------------------------------------------------------
 
 //-------------------------LED_TYPES----------------------------------------------
@@ -25,7 +25,7 @@ typedef enum
     LED_DELAY,   // F
     LED_HILO,    // G
     LED_OUT      // DP
-} led_type_t;
+} status_led_t;
 
 //-----------------------------------------------------------------------------------
 
@@ -43,32 +43,34 @@ typedef struct
     int16_t input_high;     // 2
     int16_t output_low;     // 2
     int16_t output_high;    // 2
-    uint8_t dis;            // 1
+    uint8_t display_mode;            // 1
 	uint16_t earth_trip;
+    int16_t ir_high;
+    int16_t ir_low;
 
     int16_t hlt_delay; // 2
 
-    uint8_t con;        // bit (use 0/1)
+    uint8_t contactor_monitor_enabled;        // bit (use 0/1)
     uint8_t regulation; // 8 bit
     uint8_t olr;        // bit
-    uint8_t ol1;        // 8 bit
-    uint8_t olt;        // 8 bit
-    uint8_t ol2;        // 8 bit
-	uint8_t earth_onoff;
+    uint8_t overload_level1;        // 8 bit
+    uint8_t overload_trip_ticks;        // 8 bit
+    uint8_t overload_level2;        // 8 bit
+	uint8_t earth_monitor_enabled;
 
-    float ipc; // 4
-    float opc; // 4
-    float oac; // 4
+    float input_voltage_calibration; // 4
+    float output_voltage_calibration; // 4
+    float current_calibration_factor; // 4
 
-    uint8_t auto_status; // bit
+    uint8_t auto_mode_status; // bit
 
     uint16_t crc; // for data validation
 
-} UI_Config_t;
+} runtime_config_t;
 
-UI_Config_t config;
+runtime_config_t g_config;
 
-uint16_t CalcCRC(uint8_t *buf, uint16_t len)
+uint16_t calculate_crc16(uint8_t *buf, uint16_t len)
 {
     uint16_t crc = 0xA55A;
     while (len--)
@@ -76,27 +78,27 @@ uint16_t CalcCRC(uint8_t *buf, uint16_t len)
     return crc;
 }
 
-void Save_Config(void)
+void save_config_to_flash(void)
 {
-    config.crc = CalcCRC((uint8_t *)&config,
-                         sizeof(UI_Config_t) - 2);
+    g_config.crc = calculate_crc16((uint8_t *)&g_config,
+                         sizeof(runtime_config_t) - 2);
 
     Write_DATAFLASH_ARRAY(CONFIG_FLASH_ADDR,
-                          (uint8_t *)&config,
-                          sizeof(UI_Config_t));
+                          (uint8_t *)&g_config,
+                          sizeof(runtime_config_t));
 }
 
-bit Load_Config(void)
+bit load_config_from_flash(void)
 {
     uint16_t i;
-    uint8_t *p = (uint8_t *)&config;
+    uint8_t *p = (uint8_t *)&g_config;
 
-    for (i = 0; i < sizeof(UI_Config_t); i++)
+    for (i = 0; i < sizeof(runtime_config_t); i++)
         p[i] = Read_APROM_BYTE(CONFIG_FLASH_ADDR + i);
 
-    if (config.crc ==
-        CalcCRC((uint8_t *)&config,
-                sizeof(UI_Config_t) - 2))
+    if (g_config.crc ==
+        calculate_crc16((uint8_t *)&g_config,
+                sizeof(runtime_config_t) - 2))
         return 1; // valid
     else
         return 0; // corrupted
@@ -149,9 +151,9 @@ bit Load_Config(void)
 #define DEFAULT_REG 3
 
 // input betwwn 170 to 270 is motor side fault show M.F on display
-// 1 second delay in imd trip
+// 1 second delay in imd handle_trip
 
-// 1.contactor trip detection_show disply is C.F,2. disply trip show contrinusoly with their value. 3.
+// 1.contactor handle_trip detection_show disply is C.F,2. disply handle_trip show contrinusoly with their value. 3.
 
 //-------------------------------------------------------------------------------
 
@@ -210,6 +212,10 @@ typedef enum
 		EARTH_HIGH,
 		EARTH_ON,
 		EARTH_OFF,
+        IR_HIGH,
+        IR_HIGH_SET,
+        IR_LOW,
+        IR_LOW_SET,
     ALL,
     US,
     FS,
@@ -221,9 +227,9 @@ typedef enum
     UI_US_EXIT,
     UI_FS_EXIT
 
-} ui_state_t;
+} ui_state_id_t;
 
-ui_state_t ui_state;
+ui_state_id_t g_ui_state;
 
 //-------------------------------------------------------------------------------
 
@@ -271,7 +277,7 @@ ui_state_t ui_state;
 #define SEG_8 0x7F // 8
 #define SEG_9 0x6F // 9
 
-const unsigned char segCode[10] =
+const unsigned char digit_segments[10] =
     {
         0x3F, 0x06, 0x5B, 0x4F, 0x66,
         0x6D, 0x7D, 0x07, 0x7F, 0x6F};
@@ -353,33 +359,35 @@ unsigned char TM1637_CharToSeg(char c)
 }
 
 //---------------------------------------------------------------------------------
-// dis update 45 at 10 sec
+// display_mode update 45 at 10 sec
 //------------------------Global Variable Section----------------------------------
-uint16_t ADCdataAIN;
+uint16_t adc_data_ain;
 
-int v_out = 0, v_out_raw = 0;
-float i_rms = 0;
-int v_in = 0, v_in_raw = 0;
-int v_con = 0,v_earth=0;
-float output_cal = 0.92, input_cal = 0.92, current_cal = 1;
-int error = 0;
-unsigned int up_counter = 0, down_counter = 0, menu_counter = 0, max_number = 1000, min_number = 0;
-float ref = 0.0;
-bit relay_flag = 0, error_code = 0, i_low = 0, i_high = 0, trip_flag = 0, o_low = 0, o_high = 0;
-bit start_flag = 0;
-bit error_flag = 0, aut = 1, on_status = 1;
-bit buzer = 0;
-bit setting_press = 0, up_flag = 0, down_flag = 0, set_flag = 0;
-unsigned int error_count = 0, delay_temp = 0, disp_update_error = 0, out_high = 270, out_low = 210, in_high = 260, in_low = 180, ol1 = 3, ol2 = 5, hlt = 5, olt = 120, pod_delay = 41,earth_cutoff= 15;
-int zc_flag = 0, temp = 0;
-unsigned char update_rate = 25, on_second = 10, time_count_error = 5;
-int target = 230;
-volatile bit display_update_flag = 0;
-volatile unsigned int ms_counter = 0, ui = 0, timer_20ms = 0, buzer_count = 0, trip_count = 0;
-volatile unsigned int loop_flag = 0;
-volatile char band_inc = 3, band_dec = -3, v_in_count = 0;
-unsigned char counter_display = 0, dis_start = 0, dis_end = 2, voltage_count = 1;
-unsigned char led_state = 0;
+int output_voltage = 0, output_voltage_raw = 0;
+float output_current_rms = 0;
+int input_voltage = 0, input_voltage_raw = 0;
+int contactor_voltage = 0,earth_voltage=0;
+float output_calibration = 0.92, input_calibration = 0.92, current_calibration = 1;
+int voltage_control_error = 0;
+unsigned int up_press_counter = 0, down_press_counter = 0, menu_timeout_counter = 0, edit_value_max = 1000, edit_value_min = 0;
+float adc_voltage_accumulator = 0.0;
+bit relay_enabled = 0, error_active = 0, input_low_latched = 0, input_high_latched = 0, trip_latched_flag = 0, output_low_latched = 0, output_high_latched = 0;
+bit startup_complete = 0;
+bit error_flag = 0, auto_mode_enabled = 1, startup_delay_active = 1;
+bit buzzer_output = 0;
+bit settings_page_active = 0, up_key_latched = 0, down_key_latched = 0, set_key_latched = 0;
+unsigned int error_count_ticks = 0, trip_hold_ticks = 0, trip_display_cycle = 0, output_high_limit = 270, output_low_limit = 210, input_high_limit = 260, input_low_limit = 180, overload_level1 = 3, overload_level2 = 5, hi_lo_trip_ticks = 5, overload_trip_ticks = 120, power_on_delay_ticks = 41,earth_trip_threshold= 15;
+unsigned char ir_high = 270, ir_low = 150;
+int zero_cross_wait_counter = 0, edit_value = 0;
+unsigned char display_update_ticks = 25, startup_countdown_seconds = 10, ticks_per_second = 5;
+int target_voltage = 230;
+volatile bit display_refresh_pending = 0;
+volatile unsigned int display_tick_counter = 0, set_key_hold_ticks = 0, startup_timer_ticks = 0, buzzer_cycle_ticks = 0, trip_elapsed_ticks = 0;
+volatile unsigned int main_loop_counter = 0;
+volatile char regulation_band_high = 3, regulation_band_low = -3, input_voltage_sample_count = 0;
+volatile unsigned char manual_led_tick = 0;
+unsigned char display_page_index = 0, display_page_start = 0, display_page_end = 2, voltage_scan_step = 1;
+unsigned char status_led_bitmap = 0;
 
 //-----------------------------------------------------------------------------------
 
@@ -399,35 +407,35 @@ unsigned char led_state = 0;
 //------------------------------------------------------------------------------------
 
 //------------------------Function Prototype-------------------------------------
-void Delay_us(unsigned int us);
+void delay_us(unsigned int us);
 
-int adc_data(void);
+int read_adc_sample(void);
 // int ac_voltage_rms(void);
-int ac_voltage_rms_input(uint8_t state);
-float ac_current_rms(void);
+int measure_ac_voltage_rms(uint8_t state);
+float measure_ac_current_rms(void);
 
-void TM1637_Start(void);
-void TM1637_Stop(void);
-void TM1637_WriteByte(unsigned char dat);
-void TM1637_DisplayRaw(unsigned char d0,
+void tm1637_start(void);
+void tm1637_stop(void);
+void tm1637_write_byte(unsigned char dat);
+void tm1637_display_raw(unsigned char d0,
                        unsigned char d1,
                        unsigned char d2);
-void TM1637_DisplayString(const char *str);
-void TM1637_DisplayCurrent(float current);
-void TM1637_DisplayNumber(unsigned int num);
+void tm1637_display_text(const char *str);
+void tm1637_display_current(float current);
+void tm1637_display_number(unsigned int num);
 
-void Timer0_Init_2ms(void);
-void trip(char n);
+void timer0_init_2ms(void);
+void handle_trip(char n);
 
-uint16_t CalcCRC(uint8_t *buf, uint16_t len);
-void Save_Config(void);
-bit Load_Config(void);
+uint16_t calculate_crc16(uint8_t *buf, uint16_t len);
+void save_config_to_flash(void);
+bit load_config_from_flash(void);
 unsigned long isqrt32(unsigned long x);
-void buzer_on();
+void buzzer_on();
 //--------------------------------------------------------------------------------
 
 //-------------------Delay US Function For Display--------------------------------
-void Delay_us(unsigned int us)
+void delay_us(unsigned int us)
 {
     while (us--)
     {
@@ -440,7 +448,7 @@ void Delay_us(unsigned int us)
 //-----------------------------------------------------------------------------------
 
 //----------------- ----ADC Read With INT Return-------------------------------------
-int adc_data(void)
+int read_adc_sample(void)
 {
     clr_ADCCON0_ADCF;
     set_ADCCON0_ADCS;
@@ -448,10 +456,10 @@ int adc_data(void)
     while (!(ADCCON0 & SET_BIT7))
         ;
 
-    ADCdataAIN = (ADCRH << 4);
-    ADCdataAIN |= (ADCRL & 0x0F);
+    adc_data_ain = (ADCRH << 4);
+    adc_data_ain |= (ADCRL & 0x0F);
 
-    return ADCdataAIN;
+    return adc_data_ain;
 }
 //----------------------------------------------------------------------------------
 
@@ -491,21 +499,21 @@ unsigned long isqrt32(unsigned long x)
 //     ENABLE_ADC_AIN4;
 //     ENABLE_ADC;
 
-//     ref = 0;
+//     adc_voltage_accumulator = 0;
 
-//     zc_flag = 0;
+//     zero_cross_wait_counter = 0;
 
-//     while (P15 != 0 && (++zc_flag < 300))
+//     while (P15 != 0 && (++zero_cross_wait_counter < 300))
 //         ;
-//     while (P15 == 0 && (++zc_flag < 300))
+//     while (P15 == 0 && (++zero_cross_wait_counter < 300))
 //         ;
 //     for (i = 0; i < SAMPLE_COUNT; i++)
 //     {
-//         adc_val = adc_data();
+//         adc_val = read_adc_sample();
 //         v_adc = (adc_val * ADC_REF_VOLT) / ADC_MAX;
 
 //         // printf("Vadc = %0.3f\n",v_adc); // print analog voltage Reading
-//         ref += v_adc;
+//         adc_voltage_accumulator += v_adc;
 
 //         ac_signal = v_adc - ADC_OFFSET;
 //         actual_voltage = ac_signal / GAIN_FACTOR;
@@ -514,8 +522,8 @@ unsigned long isqrt32(unsigned long x)
 
 //     DISABLE_ADC;
 
-//     // printf("The ref = %0.3f \n", ref/SAMPLE_COUNT); //For Know Refrence Voltage
-//     ref = 0;
+//     // printf("The adc_voltage_accumulator = %0.3f \n", adc_voltage_accumulator/SAMPLE_COUNT); //For Know Refrence Voltage
+//     adc_voltage_accumulator = 0;
 
 //     return isqrt32(sum_squares / SAMPLE_COUNT);
 //     // return sqrt(sum_squares / SAMPLE_COUNT);
@@ -523,7 +531,7 @@ unsigned long isqrt32(unsigned long x)
 // //----------------------------------------------------------------------------------
 
 //-------------------------Input Voltage Measurment---------------------------------
-int ac_voltage_rms_input(uint8_t state)
+int measure_ac_voltage_rms(uint8_t state)
 {
     unsigned int i;
     float sum_squares = 0.0;
@@ -547,20 +555,20 @@ int ac_voltage_rms_input(uint8_t state)
     }
     ENABLE_ADC;
 
-    ref = 0;
+    adc_voltage_accumulator = 0;
     // EA = 0;
-    zc_flag = 0;
+    zero_cross_wait_counter = 0;
 
-    while (P15 != 0 && (++zc_flag < 300))
+    while (P15 != 0 && (++zero_cross_wait_counter < 300))
         ;
-    while (P15 == 0 && (++zc_flag < 300))
+    while (P15 == 0 && (++zero_cross_wait_counter < 300))
         ;
 
     for (i = 0; i < SAMPLE_COUNT; i++)
     {
-        adc_val = adc_data();
+        adc_val = read_adc_sample();
         v_adc = (adc_val * ADC_REF_VOLT) / ADC_MAX;
-        ref += v_adc;
+        adc_voltage_accumulator += v_adc;
         ac_signal = v_adc - ADC_OFFSET;
         actual_voltage = ac_signal / GAIN_FACTOR;
 
@@ -577,7 +585,7 @@ int ac_voltage_rms_input(uint8_t state)
 //---------------------------------------------------------------------------------
 
 //-----------------OUTPUT Current Measurment----------------------------------------
-float ac_current_rms(void)
+float measure_ac_current_rms(void)
 {
     unsigned int i;
     double sum_squares = 0.0;
@@ -585,10 +593,10 @@ float ac_current_rms(void)
 
     ENABLE_ADC_AIN6;
     ENABLE_ADC;
-    ref = 5;
+    adc_voltage_accumulator = 5;
     for (i = 0; i < CURRENT_SAMPLES; i++)
     {
-        adc_val = adc_data();
+        adc_val = read_adc_sample();
         // printf("The offset is %0.3f \n",v_adc);
         v_adc = (adc_val * ADC_REF_VOLT) / ADC_MAX;
 
@@ -601,7 +609,7 @@ float ac_current_rms(void)
     }
 
     DISABLE_ADC;
-    // printf("The offset is %0.3f \n",ref);
+    // printf("The offset is %0.3f \n",adc_voltage_accumulator);
     // return isqrt32(sum_squares / CURRENT_SAMPLES);
     return sqrt(sum_squares / CURRENT_SAMPLES);
 }
@@ -609,80 +617,80 @@ float ac_current_rms(void)
 //----------------------------------------------------------------------------------
 
 //---------------------All Disply Function------------------------------------------
-void TM1637_Start(void)
+void tm1637_start(void)
 {
-    TM_CLK = 1;
-    TM_DIO = 1;
-    Delay_us(5);
+    TM1637_CLK_PIN = 1;
+    TM1637_DIO_PIN = 1;
+    delay_us(5);
 
-    TM_DIO = 0;
-    Delay_us(5);
+    TM1637_DIO_PIN = 0;
+    delay_us(5);
 
-    TM_CLK = 0;
+    TM1637_CLK_PIN = 0;
 }
 
-void TM1637_Stop(void)
+void tm1637_stop(void)
 {
-    TM_CLK = 0;
-    TM_DIO = 0;
-    Delay_us(5);
+    TM1637_CLK_PIN = 0;
+    TM1637_DIO_PIN = 0;
+    delay_us(5);
 
-    TM_CLK = 1;
-    Delay_us(5);
+    TM1637_CLK_PIN = 1;
+    delay_us(5);
 
-    TM_DIO = 1;
+    TM1637_DIO_PIN = 1;
 }
 
-void TM1637_WriteByte(unsigned char dat)
+void tm1637_write_byte(unsigned char dat)
 {
     unsigned char i;
 
     for (i = 0; i < 8; i++)
     {
-        TM_CLK = 0;
-        TM_DIO = dat & 0x01;
-        Delay_us(2);
+        TM1637_CLK_PIN = 0;
+        TM1637_DIO_PIN = dat & 0x01;
+        delay_us(2);
 
-        TM_CLK = 1;
-        Delay_us(2);
+        TM1637_CLK_PIN = 1;
+        delay_us(2);
 
         dat >>= 1;
     }
 
-    TM_CLK = 0;
-    TM_DIO = 1;
-    Delay_us(2);
+    TM1637_CLK_PIN = 0;
+    TM1637_DIO_PIN = 1;
+    delay_us(2);
 
-    TM_CLK = 1;
-    Delay_us(2);
+    TM1637_CLK_PIN = 1;
+    delay_us(2);
 
-    TM_CLK = 0;
+    TM1637_CLK_PIN = 0;
 }
 
-void TM1637_DisplayRaw(unsigned char d0,
+void tm1637_display_raw(unsigned char d0,
                        unsigned char d1,
                        unsigned char d2)
 {
-    TM1637_Start();
-    TM1637_WriteByte(0x40);
-    TM1637_Stop();
+    tm1637_start();
+    tm1637_write_byte(0x40);
+    tm1637_stop();
 
-    TM1637_Start();
-    TM1637_WriteByte(0xC0);
+    tm1637_start();
+    tm1637_write_byte(0xC0);
 
-    TM1637_WriteByte(d0);
-    TM1637_WriteByte(d1);
-    TM1637_WriteByte(d2);
-    // TM1637_WriteByte(d3);
+    tm1637_write_byte(d0);
+    tm1637_write_byte(d1);
+    tm1637_write_byte(d2);
+    // tm1637_write_byte(d3);
 
-    TM1637_Stop();
+    tm1637_stop();
 
-    TM1637_Start();
-    TM1637_WriteByte(0x8F);
-    TM1637_Stop();
+    tm1637_start();
+    tm1637_write_byte(0x8F);
+    tm1637_stop();
 }
 
-void TM1637_DisplayString(const char *str)
+void tm1637_display_text(const char *str)
 {
     unsigned char d[3] = {SEG_BLANK, SEG_BLANK, SEG_BLANK};
     unsigned char i = 0, j = 0;
@@ -704,10 +712,10 @@ void TM1637_DisplayString(const char *str)
         }
     }
 
-    TM1637_DisplayRaw(d[0], d[1], d[2]);
+    tm1637_display_raw(d[0], d[1], d[2]);
 }
 
-void TM1637_DisplayCurrent(float current)
+void tm1637_display_current(float current)
 {
     unsigned int int_part;
     unsigned int dec_part;
@@ -721,51 +729,51 @@ void TM1637_DisplayCurrent(float current)
     int_part = (unsigned int)current;
     dec_part = (unsigned int)((current - int_part) * 100);
 
-    d0 = segCode[int_part / 10];
-    d1 = segCode[int_part % 10];
-    d2 = segCode[dec_part / 10];
+    d0 = digit_segments[int_part / 10];
+    d1 = digit_segments[int_part % 10];
+    d2 = digit_segments[dec_part / 10];
 
     d1 |= SEG_DP;
 
-    TM1637_DisplayRaw(d0, d1, d2);
+    tm1637_display_raw(d0, d1, d2);
 }
 
-void TM1637_DisplayNumber(unsigned int num)
+void tm1637_display_number(unsigned int num)
 {
     unsigned char d[3];
 
     if (num > 999)
         num = 999;
 
-    d[0] = segCode[num / 100];
-    d[1] = segCode[(num / 10) % 10];
-    d[2] = segCode[(num / 1) % 10];
+    d[0] = digit_segments[num / 100];
+    d[1] = digit_segments[(num / 10) % 10];
+    d[2] = digit_segments[(num / 1) % 10];
 
-    TM1637_DisplayRaw(d[0], d[1], d[2]);
+    tm1637_display_raw(d[0], d[1], d[2]);
 }
 
 //------------led_controll-----------------------------------
 
-void LED_Control(uint8_t led, bit state)
+void set_status_led(uint8_t led, bit state)
 {
     if (state)
-        led_state |= (1 << led);
+        status_led_bitmap |= (1 << led);
     else
-        led_state &= ~(1 << led);
+        status_led_bitmap &= ~(1 << led);
 
     // FIXED ADDRESS MODE
-    TM1637_Start();
-    TM1637_WriteByte(0x44); // command: fixed address
-    TM1637_Stop();
+    tm1637_start();
+    tm1637_write_byte(0x44); // command: fixed address
+    tm1637_stop();
 
-    TM1637_Start();
-    TM1637_WriteByte(0xC3);      // 4th digit address
-    TM1637_WriteByte(led_state); // only LED data
-    TM1637_Stop();
+    tm1637_start();
+    tm1637_write_byte(0xC3);      // 4th digit address
+    tm1637_write_byte(status_led_bitmap); // only LED data
+    tm1637_stop();
 
-    TM1637_Start();
-    TM1637_WriteByte(0x8F); // display ON + brightness
-    TM1637_Stop();
+    tm1637_start();
+    tm1637_write_byte(0x8F); // display ON + brightness
+    tm1637_stop();
 }
 //-------------------------------------------------------
 
@@ -773,28 +781,28 @@ void LED_Control(uint8_t led, bit state)
 
 //---------------------------------------------------------------------------------------
 
-void trip(char n)
+void handle_trip(char n)
 {
-    if (on_status == 0)
+    if (startup_delay_active == 0)
     {
-        ++trip_count;
+        ++trip_elapsed_ticks;
 
-        /* Reuse common alternating error/tag display pattern to save code size. */
+        /* Reuse common alternating voltage_control_error/tag display pattern to save code size. */
         #define SHOW_TRIP_ALT(err_code, tag_code)                    \
             do                                                       \
             {                                                        \
-                ++disp_update_error;                                 \
-                if (disp_update_error < 6)                           \
+                ++trip_display_cycle;                                 \
+                if (trip_display_cycle < 6)                           \
                 {                                                    \
-                    TM1637_DisplayString(err_code);                  \
+                    tm1637_display_text(err_code);                  \
                 }                                                    \
-                else if (disp_update_error < 12)                     \
+                else if (trip_display_cycle < 12)                     \
                 {                                                    \
-                    TM1637_DisplayString(tag_code);                  \
+                    tm1637_display_text(tag_code);                  \
                 }                                                    \
                 else                                                 \
                 {                                                    \
-                    disp_update_error = 0;                           \
+                    trip_display_cycle = 0;                           \
                 }                                                    \
             } while (0)
 
@@ -806,107 +814,105 @@ void trip(char n)
             P01 = 1;
             P12 = 1;
             EA = 0;
-            while (UP == 0)
+            while (BTN_UP == 0)
             {
-                TM1637_DisplayString("E01");
+                tm1637_display_text("E01");
                 P00 = 1;
                 Timer2_Delay(24000000, 13, 500);
                 P00 = 0;
-                if (error < 0)
+                if (voltage_control_error < 0)
                 {
-                    TM1637_DisplayString("INC");
+                    tm1637_display_text("INC");
                 }
                 else
                 {
-                    TM1637_DisplayString("DEC");
+                    tm1637_display_text("DEC");
                 }
                 Timer2_Delay(24000000, 11, 700);
             }
-            start_flag = 0;
-            timer_20ms = 0;
-            on_status = 1;
-						LED_Control(LED_DELAY,1);
+            startup_complete = 0;
+            startup_timer_ticks = 0;
+            startup_delay_active = 1;
             EA = 1;
             break;
 
         case 2:
             
            
-					if(trip_count > 5) {
-						LED_Control(LED_HILO, 1);
+					if(trip_elapsed_ticks > 5) {
+						set_status_led(LED_HILO, 1);
 						SHOW_TRIP_ALT("E02", "IPH");
 					}
-            if (trip_count > hlt)
+            if (trip_elapsed_ticks > hi_lo_trip_ticks)
             { // 40 9sec
-                i_high = 1;
-                relay_flag = 0;
+                input_high_latched = 1;
+                relay_enabled = 0;
                 P00 = 0;
             }
             else
             {
-                buzer_on();
+                buzzer_on();
             }
             break;
 
         case 3:
-            LED_Control(LED_OVL, 1);
-            if (trip_count > olt)
+            set_status_led(LED_OVL, 1);
+            if (trip_elapsed_ticks > overload_trip_ticks)
             {
                 P17 = 0;
                 P00 = 0;
                 P13 = 1;
                 P12 = 1;
                 // EA = 0;
-                delay_temp = 0;
-                trip_flag = 1;
-                while (UP != 1 && delay_temp < 130)
+                trip_hold_ticks = 0;
+                trip_latched_flag = 1;
+                while (BTN_UP != 1 && trip_hold_ticks < 130)
                 {
-                    TM1637_DisplayString("OL1");
+                    tm1637_display_text("OL1");
 
-                    timer_20ms = 0;
-                    while (timer_20ms < 100)
+                    startup_timer_ticks = 0;
+                    while (startup_timer_ticks < 100)
                     {
                         P00 = 1;
                     }
-                    timer_20ms = 0;
-                    while (timer_20ms < 100)
+                    startup_timer_ticks = 0;
+                    while (startup_timer_ticks < 100)
                     {
                         P00 = 0;
                     }
-                    ++delay_temp;
+                    ++trip_hold_ticks;
                 }
 
-                start_flag = 0;
-                timer_20ms = 0;
-                on_status = 1;
-                i_rms = 0;
+                startup_complete = 0;
+                startup_timer_ticks = 0;
+                startup_delay_active = 1;
+                output_current_rms = 0;
                 P00 = 0;
-                relay_flag = 0;
-                counter_display = 1;
-                LED_Control(LED_DELAY,1);
+                relay_enabled = 0;
+                display_page_index = 1;
             }
             else
             {
-                buzer_on();
+                buzzer_on();
             }
             break;
 
         case 4:
            
            
-					if(trip_count > 5) {
-						 LED_Control(LED_HILO, 1);
+					if(trip_elapsed_ticks > 5) {
+						 set_status_led(LED_HILO, 1);
 						 SHOW_TRIP_ALT("E03", "IPL");
 					}
-            if (trip_count > hlt)
+            if (trip_elapsed_ticks > hi_lo_trip_ticks)
             { // 40 9sec
-                i_low = 1;
-                relay_flag = 0;
+                input_low_latched = 1;
+                relay_enabled = 0;
                 P00 = 0;
             }
             else
             {
-                buzer_on();
+                buzzer_on();
             }
             break;
             break;
@@ -915,128 +921,126 @@ void trip(char n)
             
            
 				
-				if(trip_count > 5) {
-					 LED_Control(LED_HILO, 1);
+				if(trip_elapsed_ticks > 5) {
+					 set_status_led(LED_HILO, 1);
 				SHOW_TRIP_ALT("E04", "OPL");
 				}
 				    
-            if (trip_count > hlt)
+            if (trip_elapsed_ticks > hi_lo_trip_ticks)
             { // 40 9sec
                 P00 = 0;
-                o_low = 1;
-                relay_flag = 0;
+                output_low_latched = 1;
+                relay_enabled = 0;
             }
             else
             {
-                buzer_on();
+                buzzer_on();
             }
             break;
 
         case 6:
             
            
-					if(trip_count > 5) {
-						 LED_Control(LED_HILO, 1);
+					if(trip_elapsed_ticks > 5) {
+						 set_status_led(LED_HILO, 1);
 						SHOW_TRIP_ALT("E05", "OPH");
 					}
-            if (trip_count > hlt)
+            if (trip_elapsed_ticks > hi_lo_trip_ticks)
             { // 40 9sec
                 P00 = 0;
-                o_high = 1;
-                relay_flag = 0;
+                output_high_latched = 1;
+                relay_enabled = 0;
             }
             else
             {
-                buzer_on();
+                buzzer_on();
             }
             break;
 
         case 7:
-   if (trip_count > 4)
+   if (trip_elapsed_ticks > 4)
             {
             P17 = 0;
             P00 = 0;
             P01 = 1;
             P12 = 1;
             // EA = 0;
-            LED_Control(LED_OVL, 1);
-            delay_temp = 0;
-            while (UP != 1 && delay_temp < 130)
+            set_status_led(LED_OVL, 1);
+            trip_hold_ticks = 0;
+            while (BTN_UP != 1 && trip_hold_ticks < 130)
             {
-                TM1637_DisplayString("OL2");
+                tm1637_display_text("OL2");
 
-                timer_20ms = 0;
-                while (timer_20ms < 100)
+                startup_timer_ticks = 0;
+                while (startup_timer_ticks < 100)
                 {
                     P00 = 1;
                 }
-                timer_20ms = 0;
-                while (timer_20ms < 100)
+                startup_timer_ticks = 0;
+                while (startup_timer_ticks < 100)
                 {
                     P00 = 0;
                 }
-                ++delay_temp;
+                ++trip_hold_ticks;
             }
-            start_flag = 0;
-            timer_20ms = 0;
-            i_rms = 0;
-            on_status = 1;
-            relay_flag = 0;
-            counter_display = 1;
-						LED_Control(LED_DELAY,1);
+            startup_complete = 0;
+            startup_timer_ticks = 0;
+            output_current_rms = 0;
+            startup_delay_active = 1;
+            relay_enabled = 0;
+            display_page_index = 1;
 					}
             break;
 
             case 8:
-            ++disp_update_error;
+            ++trip_display_cycle;
 
             
-            if (trip_count > 28)
+            if (trip_elapsed_ticks > 28)
             { // 40 9sec
                 P17 = 0;
-							LED_Control(LED_OUT,0);
+							set_status_led(LED_OUT,0);
                 P00 = 0;
                 P01 = 1;
                 P12 = 1;
-               TM1637_DisplayString("C.F");
+               tm1637_display_text("C.F");
 
-               while (UP != 1)
+               while (BTN_UP != 1)
             {
-                timer_20ms = 0;
-                while (timer_20ms < 100)
+                startup_timer_ticks = 0;
+                while (startup_timer_ticks < 100)
                 {
                     P00 = 1;
                 }
-                timer_20ms = 0;
-                while (timer_20ms < 100)
+                startup_timer_ticks = 0;
+                while (startup_timer_ticks < 100)
                 {
                     P00 = 0;
                 }
             }
-            start_flag = 0;
-            timer_20ms = 0;
-            i_rms = 0;
-            on_status = 1;
-            relay_flag = 0;
-            counter_display = 1;
-						LED_Control(LED_DELAY,1);
+            startup_complete = 0;
+            startup_timer_ticks = 0;
+            output_current_rms = 0;
+            startup_delay_active = 1;
+            relay_enabled = 0;
+            display_page_index = 1;
             }
-            else if(trip_count > 12)
+            else if(trip_elapsed_ticks > 12)
             {
-                buzer_on();
+                buzzer_on();
             }
             break;
 						
 						case 9:
             SHOW_TRIP_ALT("E06", "E.F");
-            if (trip_count > hlt)
+            if (trip_elapsed_ticks > hi_lo_trip_ticks)
             { // 40 9sec
                 P00 = 0;
-                relay_flag = 0;
+                relay_enabled = 0;
             }
             else
             {
-                buzer_on();
+                buzzer_on();
             }
             break;
         }
@@ -1047,51 +1051,51 @@ void trip(char n)
 //-----------------------HELPER FUNCTION-----------------------------------------
 // write 15771
 
-bit key_up_pressed()
+bit is_up_key_pressed()
 {
-    if (UP == 1 && up_flag == 0)
+    if (BTN_UP == 1 && up_key_latched == 0)
     {
         Timer2_Delay(24000000, 1, 100);
-        up_flag = 1;
-        menu_counter = 0;
+        up_key_latched = 1;
+        menu_timeout_counter = 0;
         return 1;
     }
-    if (UP == 0)
+    if (BTN_UP == 0)
     {
-        up_flag = 0;
-        up_counter = 0;
+        up_key_latched = 0;
+        up_press_counter = 0;
     }
     return 0;
 }
 
-bit key_down_pressed()
+bit is_down_key_pressed()
 {
-    if (DOWN == 1 && down_flag == 0)
+    if (BTN_DOWN == 1 && down_key_latched == 0)
     {
         Timer2_Delay(24000000, 1, 100);
-        down_flag = 1;
-        menu_counter = 0;
+        down_key_latched = 1;
+        menu_timeout_counter = 0;
         return 1;
     }
-    if (DOWN == 0)
+    if (BTN_DOWN == 0)
     {
-        down_flag = 0;
-        down_counter = 0;
+        down_key_latched = 0;
+        down_press_counter = 0;
     }
     return 0;
 }
-bit key_set_pressed()
+bit is_set_key_pressed()
 {
-    if (SETTING == 1 && set_flag == 0)
+    if (BTN_SET == 1 && set_key_latched == 0)
     {
         Timer2_Delay(24000000, 1, 100);
-        set_flag = 1;
-        menu_counter = 0;
+        set_key_latched = 1;
+        menu_timeout_counter = 0;
         return 1;
     }
-    if (SETTING == 0)
+    if (BTN_SET == 0)
     {
-        set_flag = 0;
+        set_key_latched = 0;
     }
     return 0;
 }
@@ -1100,59 +1104,59 @@ bit key_set_pressed()
 
 //---------------------------------------------------------------------------------------
 
-void set_dis()
+void update_display_cycle_selection()
 {
-    switch (config.dis)
+    switch (g_config.display_mode)
     {
 
     case 1:
-        dis_start = 0;
-        dis_end = 0;
+        display_page_start = 0;
+        display_page_end = 0;
         break;
     case 2:
-        dis_start = 1;
-        dis_end = 1;
+        display_page_start = 1;
+        display_page_end = 1;
         break;
     case 3:
-        dis_start = 2;
-        dis_end = 2;
+        display_page_start = 2;
+        display_page_end = 2;
         break;
     case 4:
-        dis_start = 0;
-        dis_end = 2;
+        display_page_start = 0;
+        display_page_end = 2;
         break;
     }
 }
 
 //----------------------Buzer Count-------------------------------------------------
 
-void buzer_on()
+void buzzer_on()
 {
 
-    if (buzer_count < time_count_error)
+    if (buzzer_cycle_ticks < ticks_per_second)
     {
-        // printf("buzer on \n");
-        buzer = 1;
+        // printf("buzzer_output on \n");
+        buzzer_output = 1;
     }
 
     else
     {
-        buzer = 0;
+        buzzer_output = 0;
     }
-    ++buzer_count;
+    ++buzzer_cycle_ticks;
 
-    if (buzer_count > (time_count_error * 2))
+    if (buzzer_cycle_ticks > (ticks_per_second * 2))
     {
-        buzer_count = 0;
+        buzzer_cycle_ticks = 0;
     }
 
-    P00 = buzer;
+    P00 = buzzer_output;
 }
 
 //----------------------------------------------------------------------------------
 
 //-------------Timer0 Innetrupt At Every 20ms--------------------------------------
-void Timer0_Init_2ms(void)
+void timer0_init_2ms(void)
 {
     TMOD &= 0xF0; // Clear Timer0 bits
     TMOD |= 0x01; // Timer0 Mode 1 (16-bit)
@@ -1168,106 +1172,128 @@ void Timer0_Init_2ms(void)
 //----------------------------------------------------------------------------------
 
 //--------------------Timer0 ISR Function-------------------------------------------
-void Timer0_ISR(void) interrupt 1
+void timer0_isr(void) interrupt 1
 {
     // Reload timer for next 2ms
     TH0 = 0xF0;
     TL0 = 0x60;
 
-    ms_counter++;
+    display_tick_counter++;
 
-    if (SETTING == 1) // assuming active low button
+    if (BTN_SET == 1) // assuming active low button
     {
-        ++ui;
+        ++set_key_hold_ticks;
     }
     else
     {
-        ui = 0;
+        set_key_hold_ticks = 0;
     }
 
-    if (ui > (time_count_error * 8))
+    if (set_key_hold_ticks > (ticks_per_second * 8))
     {
-        update_rate = 0;
-        ui = 0;
-        temp = 999;
-        set_flag = 1;
-        ui_state = AUT;
+        display_update_ticks = 0;
+        set_key_hold_ticks = 0;
+        edit_value = 999;
+        set_key_latched = 1;
+        g_ui_state = AUT;
     }
 
-    if (ms_counter >= update_rate) // 1 × 2ms = 2ms
+    if (display_tick_counter >= display_update_ticks) // 1 ?? 2ms = 2ms
     {
         // printf("---------ok--------\n");
-        // printf("ms counter = %d\n",ms_counter);
-        ms_counter = 0;
-        display_update_flag = 1;
+        // printf("ms counter = %d\n",display_tick_counter);
+        display_tick_counter = 0;
+        display_refresh_pending = 1;
     }
-    ++timer_20ms;
+    ++startup_timer_ticks;
 
-    if (timer_20ms > pod_delay)
+    if (startup_timer_ticks > power_on_delay_ticks)
     {
-        if (start_flag == 0)
+        if (startup_complete == 0)
         {
-            start_flag = 1;
-            on_status = 0;
+            startup_complete = 1;
+            startup_delay_active = 0;
             P00 = 0;
-            LED_Control(LED_DELAY, 0);
-            // TM1637_DisplayString("IP");
+            // tm1637_display_text("IP");
         }
 
-        // printf("\n buzer off flag 1 \n");
+        // printf("\n buzzer_output off flag 1 \n");
     }
-    else if (start_flag == 0)
+    else if (startup_complete == 0)
     {
-        buzer_on();
-        TM1637_DisplayNumber(on_second - (timer_20ms / time_count_error));
-        //(on_second - (timer_20ms/13))
+        buzzer_on();
+        if (((startup_timer_ticks / ticks_per_second) & 1) == 0)
+        {
+            tm1637_display_text("DLY");
+        }
+        else
+        {
+            tm1637_display_number(startup_countdown_seconds - (startup_timer_ticks / ticks_per_second));
+        }
+        //(startup_countdown_seconds - (startup_timer_ticks/13))
     }
 }
 
 //------------------------update----------------------
 
-void set_parameter()
+void apply_config_to_runtime()
 {
 
-    set_dis();
-    in_high = config.input_high;
-    in_low = config.input_low;
-    out_high = config.output_high;
-    out_low = config.output_low;
-    hlt = (int)(config.hlt_delay * 4.44);
-    band_inc = config.regulation;
-    band_dec = config.regulation * (-1);
-    ol1 = config.ol1;
-    ol2 = config.ol1 + 3;
-    olt = (int)(config.olt * 4.44);
-    pod_delay = (int)(config.on_delay * 5);
-    input_cal = config.ipc;
-    output_cal = config.opc;
-    current_cal = config.oac;
-	earth_cutoff = config.earth_trip;
+    update_display_cycle_selection();
+    target_voltage = g_config.target_voltage;
+    input_high_limit = g_config.input_high;
+    input_low_limit = g_config.input_low;
+    output_high_limit = g_config.output_high;
+    output_low_limit = g_config.output_low;
+    hi_lo_trip_ticks = (int)(g_config.hlt_delay * 4.44);
+    regulation_band_high = g_config.regulation;
+    regulation_band_low = g_config.regulation * (-1);
+    overload_level1 = g_config.overload_level1;
+    overload_level2 = g_config.overload_level1 + 3;
+    overload_trip_ticks = (int)(g_config.overload_trip_ticks * 4.44);
+    power_on_delay_ticks = (int)(g_config.on_delay * 5);
+    input_calibration = g_config.input_voltage_calibration;
+    output_calibration = g_config.output_voltage_calibration;
+    current_calibration = g_config.current_calibration_factor;
+	earth_trip_threshold = g_config.earth_trip;
+    ir_high = g_config.ir_high;
+    ir_low = g_config.ir_low;
 }
 
 //-----------------------------------------------------------------------------------
 
 //------------------------set_max_min_number-------------------------------------------
 
-void set_max_min(int max, int min)
+void set_edit_bounds(int max, int min)
 {
-    max_number = max;
-    min_number = min;
+    edit_value_max = max;
+    edit_value_min = min;
+}
+
+static int16_t clamp_i16(int16_t value, int16_t min_v, int16_t max_v)
+{
+    if (value < min_v)
+    {
+        return min_v;
+    }
+    if (value > max_v)
+    {
+        return max_v;
+    }
+    return value;
 }
 
 /* Re-apply startup delay before reconnecting after voltage fault recovery. */
-void start_recovery_delay(void)
+void start_reconnect_delay(void)
 {
-    pod_delay = (unsigned int)(config.hlt_delay * 5);
-    time_count_error = 5;
-    on_second = (unsigned char)(pod_delay / 5);
-    start_flag = 0;
-    on_status = 1;
-    timer_20ms = 0;
-    relay_flag = 0;
-    LED_Control(LED_DELAY, 1);
+    power_on_delay_ticks = (unsigned int)(g_config.hlt_delay * 5);
+    ticks_per_second = 5;
+    startup_countdown_seconds = (unsigned char)(power_on_delay_ticks / 5);
+    startup_complete = 0;
+    startup_delay_active = 1;
+    startup_timer_ticks = 0;
+    relay_enabled = 0;
+    set_status_led(LED_DELAY, 1);
 }
 
 //-------------------------------------------------------------------------------------
@@ -1297,156 +1323,165 @@ void main(void)
     P17 = 0;
     P00 = 0;
 
-    if (Load_Config() == 0)
+    if (load_config_from_flash() == 0)
     {
         // first time defaults
-        config.target_voltage = 230;
-        config.on_delay = 10;
-        config.input_low = 190;
-        config.input_high = 270;
-        config.output_low = 210;
-        config.output_high = 270;
-        config.dis = 4;
-        config.hlt_delay = 5;
-        config.con = 0;
-        config.regulation = 3;
-        config.olr = 1;
-        config.ol1 = 10;
-        config.olt = 10;
-        config.ol2 = 13;
-        config.ipc = 1.0; // 0.92
-        config.opc = 1.0; // 0.92
-        config.oac = 1.0;
-        config.auto_status = 1;
-			  config.con = 1;
-			config.earth_onoff = 0;
-			config.earth_trip = 15;
+        g_config.target_voltage = 230;
+        g_config.on_delay = 10;
+        g_config.input_low = 190;
+        g_config.input_high = 270;
+        g_config.output_low = 210;
+        g_config.output_high = 270;
+        g_config.display_mode = 4;
+        g_config.hlt_delay = 5;
+        g_config.contactor_monitor_enabled = 0;
+        g_config.regulation = 3;
+        g_config.olr = 1;
+        g_config.overload_level1 = 10;
+        g_config.overload_trip_ticks = 10;
+        g_config.overload_level2 = 13;
+        g_config.input_voltage_calibration = 1.0; // 0.92
+        g_config.output_voltage_calibration = 1.0; // 0.92
+        g_config.current_calibration_factor = 1.0;
+        g_config.auto_mode_status = 1;
+			  g_config.contactor_monitor_enabled = 1;
+			g_config.earth_monitor_enabled = 0;
+			g_config.earth_trip = 15;
+                g_config.ir_high = 270;
+                g_config.ir_low = 150;
 
-        Save_Config(); // store defaults
+        save_config_to_flash(); // store defaults
     }
-    set_parameter();
-    LED_Control(LED_DELAY, 1);
-    on_second = (int)(pod_delay / 5);
-    v_in = (int)(ac_voltage_rms_input(1) * input_cal);
-    Timer0_Init_2ms();
+    apply_config_to_runtime();
+    set_status_led(LED_DELAY, 1);
+    startup_countdown_seconds = (int)(power_on_delay_ticks / 5);
+    input_voltage = (int)(measure_ac_voltage_rms(1) * input_calibration);
+    timer0_init_2ms();
 
-    // TM1637_DisplayString("IP");
+    // tm1637_display_text("IP");
 
     while (1)
     {
         EA = 0;
-        v_out = (int)(ac_voltage_rms_input(0) * output_cal);
+        output_voltage = (int)(measure_ac_voltage_rms(0) * output_calibration);
 
-        if (v_out < 100 || v_out > 1000)
+        if (output_voltage < 100 || output_voltage > 1000)
         {
-            v_out = 0;
+            output_voltage = 0;
         }
-        error = (int)(v_out - target);
+        voltage_control_error = (int)(output_voltage - target_voltage);
 
-        if (error >= band_inc && aut)
+        if (voltage_control_error >= regulation_band_high && auto_mode_enabled)
         {
             P12 = 1;
             P01 = 0;
             error_flag = 1;
         }
-        else if (error <= band_dec && aut)
+        else if (voltage_control_error <= regulation_band_low && auto_mode_enabled)
         {
             P01 = 1;
             P12 = 0;
             error_flag = 1;
         }
-        else if (aut == 1)
+        else if (auto_mode_enabled == 1)
         {
             P12 = 1;
             P01 = 1;
             error_flag = 0;
-            // error_count = 0;
+            // error_count_ticks = 0;
         }
-        if ((error_flag == 0 || error < (-220) || error_count > 50) && on_status == 0)
+        if ((error_flag == 0 || voltage_control_error < (-220) || error_count_ticks > 50) && startup_delay_active == 0)
         {
-            pod_delay = (int)(config.on_delay * 5);
-            time_count_error = 5;
-            on_second = (int)(pod_delay / 5);
-            if (voltage_count == 1)
+            power_on_delay_ticks = (int)(g_config.on_delay * 5);
+            ticks_per_second = 5;
+            startup_countdown_seconds = (int)(power_on_delay_ticks / 5);
+            if (voltage_scan_step == 1)
             {
-                v_in = (int)(ac_voltage_rms_input(1) * input_cal);
-                if (v_in < 100 || v_in > 1000)
+                input_voltage = (int)(measure_ac_voltage_rms(1) * input_calibration);
+                if (input_voltage < 100 || input_voltage > 1000)
                 {
-                    v_in = 0;
+                    input_voltage = 0;
                 }
-                ++voltage_count;
+                ++voltage_scan_step;
             }
 
-            else if (voltage_count == 2)
+            else if (voltage_scan_step == 2)
             {
-                v_con = (int)(ac_voltage_rms_input(2));
+                contactor_voltage = (int)(measure_ac_voltage_rms(2));
                 
-                ++voltage_count;
+                ++voltage_scan_step;
             }
-            else if (voltage_count == 3)
+            else if (voltage_scan_step == 3)
             {
-                v_earth = (int)(ac_voltage_rms_input(3));
+                earth_voltage = (int)(measure_ac_voltage_rms(3));
                 
-                voltage_count = 1;
+                voltage_scan_step = 1;
             }
 
-            i_rms = (ac_current_rms()) * current_cal;
+            output_current_rms = (measure_ac_current_rms()) * current_calibration;
 
-            if (i_rms < 0.8)
+            if (output_current_rms < 0.8)
             {
-                i_rms=0;
+                output_current_rms=0;
             }
 
             EA = 1;
 
-            if (error_count > 110 && v_in > 140 && v_in < 270)
+            if (error_count_ticks > 110 && input_voltage > ir_low && input_voltage < ir_high)
             {
-                trip(1); // motor side detection
-                error_count = 0;
+                handle_trip(1); // motor side detection
+                error_count_ticks = 0;
             }
 
-            if (error_count > 50)
+            if (error_count_ticks > 50)
             {
 
-                ++error_count;
+                ++error_count_ticks;
             }
             else
             {
-                error_count = 0;
+                error_count_ticks = 0;
             }
-            // error_count = 0;
+            // error_count_ticks = 0;
         }
-        else if (on_status == 1)
+        else if (startup_delay_active == 1)
         {
-            pod_delay = (int)(config.on_delay * 12);
-            time_count_error = 12;
-            on_second = (int)(pod_delay / 12);
+            power_on_delay_ticks = (int)(g_config.on_delay * 12);
+            ticks_per_second = 12;
+            startup_countdown_seconds = (int)(power_on_delay_ticks / 12);
             EA = 1;
         }
         else
         {
-            if (error_count > 20)
+            if (error_count_ticks > 20)
                 P00 = 0;
-            ++error_count;
+            ++error_count_ticks;
         }
 
-        // printf("The voltage is %d \n", v_out); // For output voltage print
-        //  printf("The current is %0.3f \n",i_rms);
-        //  printf("The error is %d \n",(int)error); //For Error Print
-        //  if (v_out > OUTPUT_LOW && v_out < OUTPUT_HIGH && v_in < INPUT_HIGH && v_in > INPUT_LOW && i_rms < OVERCURRENT && start_flag==1)
+        // printf("The voltage is %d \n", output_voltage); // For output voltage print
+        //  printf("The current is %0.3f \n",output_current_rms);
+        //  printf("The voltage_control_error is %d \n",(int)voltage_control_error); //For Error Print
+        //  if (output_voltage > OUTPUT_LOW && output_voltage < OUTPUT_HIGH && input_voltage < INPUT_HIGH && input_voltage > INPUT_LOW && output_current_rms < OVERCURRENT && startup_complete==1)
 
         //-----------------------manual------------
 
-        if (aut == 0 && ui_state == UI_NORMAL)
+        if (auto_mode_enabled == 0 && g_ui_state == UI_NORMAL)
         {
+            ++manual_led_tick;
+            if (manual_led_tick >= 50)
+            {
+                manual_led_tick = 0;
+            }
 
-            if (UP == 1)
+            set_status_led(LED_DELAY, manual_led_tick < 25);
+
+            if (BTN_UP == 1)
             {
                 P01 = 1;
                 P12 = 0;
             }
 
-            else if (DOWN == 1)
+            else if (BTN_DOWN == 1)
             {
                 P12 = 1;
                 P01 = 0;
@@ -1458,1146 +1493,1239 @@ void main(void)
                 P01 = 1;
             }
         }
+        else
+        {
+            manual_led_tick = 0;
+            set_status_led(LED_DELAY, 0);
+        }
 
         //------------------------------------
 
-        if (v_out > out_high && o_high == 0)
+        if (output_voltage > output_high_limit && output_high_latched == 0)
         {
-            error_code = 1;
-            trip(6);
+            error_active = 1;
+            handle_trip(6);
         }
-        else if (v_out < out_low && o_low == 0)
+        else if (output_voltage < output_low_limit && output_low_latched == 0)
         {
-            error_code = 1;
-            trip(5);
+            error_active = 1;
+            handle_trip(5);
         }
-        else if (v_in > in_high && i_high == 0)
+        else if (input_voltage > input_high_limit && input_high_latched == 0)
         {
-            error_code = 1;
-            trip(2);
+            error_active = 1;
+            handle_trip(2);
         }
-        else if (v_in < in_low && i_low == 0)
+        else if (input_voltage < input_low_limit && input_low_latched == 0)
         {
-            error_code = 1;
-            trip(4);
+            error_active = 1;
+            handle_trip(4);
         }
         
-        else if (i_rms > ol2)
+        else if (output_current_rms > overload_level2)
         {
-            trip(7);
+            handle_trip(7);
         }
-        else if (i_rms > ol1)
+        else if (output_current_rms > overload_level1)
         {
-            trip(3);
+            handle_trip(3);
         }
-        else if(start_flag == 1 && relay_flag == 1 && v_out > 180 && v_con < 100 && config.con == 1) {
+        else if(startup_complete == 1 && relay_enabled == 1 && output_voltage > 180 && contactor_voltage < 100 && g_config.contactor_monitor_enabled == 1) {
 
-              trip(8);
+              handle_trip(8);
         }
-				else if(config.earth_onoff == 1 && v_earth > earth_cutoff) {
+				else if(g_config.earth_monitor_enabled == 1 && earth_voltage > earth_trip_threshold) {
 
-              trip(9);
+              handle_trip(9);
         }
-        else if (start_flag == 1)
+        else if (startup_complete == 1)
         {
-            trip_count = 0;
-            error_code = 0;
+            trip_elapsed_ticks = 0;
+            error_active = 0;
             P00 = 0;
 
-            if (i_high == 1)
+            if (input_high_latched == 1)
             {
 
-                if (v_in < (in_high - 20))
+                if (input_voltage < (input_high_limit - 20))
                 {
-                    start_recovery_delay();
-                    LED_Control(LED_HILO, 0);
-                    i_high = 0;
+                    start_reconnect_delay();
+                    set_status_led(LED_HILO, 0);
+                    input_high_latched = 0;
                 }
             }
 
-            else if (i_low == 1)
+            else if (input_low_latched == 1)
             {
-                if (v_in > (in_low + 25))
+                if (input_voltage > (input_low_limit + 25))
                 {
-                    start_recovery_delay();
-                    LED_Control(LED_HILO, 0);
-                    i_low = 0;
+                    start_reconnect_delay();
+                    set_status_led(LED_HILO, 0);
+                    input_low_latched = 0;
                 }
             }
 
-            else if (o_high == 1)
+            else if (output_high_latched == 1)
             {
 
-                if (v_out < (out_high - 10))
+                if (output_voltage < (output_high_limit - 10))
                 {
-                    start_recovery_delay();
-                    LED_Control(LED_HILO, 0);
-                    o_high = 0;
+                    start_reconnect_delay();
+                    set_status_led(LED_HILO, 0);
+                    output_high_latched = 0;
                 }
             }
 
-            else if (o_low == 1)
+            else if (output_low_latched == 1)
             {
 
-                if (v_out > (out_low + 10))
+                if (output_voltage > (output_low_limit + 10))
                 {
-                    start_recovery_delay();
-                    LED_Control(LED_HILO, 0);
-                    o_low = 0;
+                    start_reconnect_delay();
+                    set_status_led(LED_HILO, 0);
+                    output_low_latched = 0;
                 }
             }
             else
             {
-                relay_flag = 1;
-							   LED_Control(LED_HILO, 0);
-							    LED_Control(LED_OVL, 0);
+                relay_enabled = 1;
+							   set_status_led(LED_HILO, 0);
+							    set_status_led(LED_OVL, 0);
             }
         }
 
         else
         {
-            error_code = 0;
-            trip_count = 0;
+            error_active = 0;
+            trip_elapsed_ticks = 0;
         }
 
-        P17 = relay_flag;
-        LED_Control(LED_OUT, relay_flag);
+        P17 = relay_enabled;
+        set_status_led(LED_OUT, relay_enabled);
 
-        if (display_update_flag && on_status == 0)
+        if (display_refresh_pending && startup_delay_active == 0)
         {
-            display_update_flag = 0;
+            display_refresh_pending = 0;
 
-            if (ui_state == UI_NORMAL && error_code == 0)
+            if (g_ui_state == UI_NORMAL && error_active == 0)
             {
-                LED_Control(LED_AUTO, config.auto_status);
+                set_status_led(LED_AUTO, g_config.auto_mode_status);
 
-                switch (counter_display)
+                switch (display_page_index)
                 {
 
                 
                 case 0:	  
-								     LED_Control(LED_OP,0);
-								     LED_Control(LED_OA, 0);
-								     LED_Control(LED_IP, 1);
-                    TM1637_DisplayNumber((unsigned int)v_in);
+								     set_status_led(LED_OP,0);
+								     set_status_led(LED_OA, 0);
+								     set_status_led(LED_IP, 1);
+                    tm1637_display_number((unsigned int)input_voltage);
                     break;
                
                 case 1:
                      
-								     LED_Control(LED_OA, 0);
-								     LED_Control(LED_IP, 0);
-								     LED_Control(LED_OP,1);
-                    TM1637_DisplayNumber((unsigned int)v_out);
+								     set_status_led(LED_OA, 0);
+								     set_status_led(LED_IP, 0);
+								     set_status_led(LED_OP,1);
+                    tm1637_display_number((unsigned int)output_voltage);
                     break;
               
                 case 2:
-									   LED_Control(LED_IP, 0);
-								     LED_Control(LED_OP,0);
-									   LED_Control(LED_OA, 1);
+									   set_status_led(LED_IP, 0);
+								     set_status_led(LED_OP,0);
+									   set_status_led(LED_OA, 1);
 								     
-                    TM1637_DisplayCurrent(i_rms);
+                    tm1637_display_current(output_current_rms);
                     break;
                 }
 
-                counter_display++;
-                if (counter_display > dis_end)
+                display_page_index++;
+                if (display_page_index > display_page_end)
                 {
-                    counter_display = dis_start;
+                    display_page_index = display_page_start;
                 }
             }
             else
             {
-                ++menu_counter;
+                ++menu_timeout_counter;
 							
-							if(HOME == 1) {
-							         // ui_state = UI_NORMAL;
-                        //update_rate = 20;
+							if(BTN_HOME == 1) {
+							         // g_ui_state = UI_NORMAL;
+                        //display_update_ticks = 20;
 							
 							}
-                switch (ui_state)
+                switch (g_ui_state)
                 {
 
                 case AUT:
-                    TM1637_DisplayString("MOD");
-                    if (key_set_pressed())
+                    tm1637_display_text("MOD");
+                    if (is_set_key_pressed())
                     {
 
-                        ui_state = AUT_ON;
+                        g_ui_state = AUT_ON;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = US;
+                        g_ui_state = US;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = UI_EXIT;
+                        g_ui_state = UI_EXIT;
                     }
                     break;
                 case AUT_ON:
-                    TM1637_DisplayString("AT");
-                    if (key_set_pressed())
+                    tm1637_display_text("AT");
+                    if (is_set_key_pressed())
                     {
 
-                        config.auto_status = 1;
-                        aut = 1;
-                        LED_Control(LED_AUTO, config.auto_status);
-                        ui_state = AUT;
+                        g_config.auto_mode_status = 1;
+                        auto_mode_enabled = 1;
+                        set_status_led(LED_AUTO, g_config.auto_mode_status);
+                        g_ui_state = AUT;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = AUT_OFF;
+                        g_ui_state = AUT_OFF;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = AUT_OFF;
+                        g_ui_state = AUT_OFF;
                     }
                     break;
 
                 case AUT_OFF:
-                    TM1637_DisplayString("MN");
-                    if (key_set_pressed())
+                    tm1637_display_text("MN");
+                    if (is_set_key_pressed())
                     {
 
-                        config.auto_status = 0;
-                        aut = 0;
-                        LED_Control(LED_AUTO, config.auto_status);
-                        ui_state = AUT;
+                        g_config.auto_mode_status = 0;
+                        auto_mode_enabled = 0;
+                        set_status_led(LED_AUTO, g_config.auto_mode_status);
+                        g_ui_state = AUT;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = AUT_ON;
+                        g_ui_state = AUT_ON;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = AUT_ON;
+                        g_ui_state = AUT_ON;
                     }
                     break;
 
                 case US:
-                    TM1637_DisplayString("U.ST"); // U.St
-                    if (key_set_pressed())
+                    tm1637_display_text("U.ST"); // U.St
+                    if (is_set_key_pressed())
                     {
 
-                        temp = 0;
-                        set_max_min(1000, 0);
-                        ui_state = US_PASSWORD;
+                        edit_value = 0;
+                        set_edit_bounds(1000, 0);
+                        g_ui_state = US_PASSWORD;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = FS;
+                        g_ui_state = FS;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = AUT;
+                        g_ui_state = AUT;
                     }
                     break;
 
                 case US_PASSWORD:
-                    TM1637_DisplayNumber((unsigned int)temp);
-                    if (key_set_pressed() && temp == 5)
+                    tm1637_display_number((unsigned int)edit_value);
+                    if (is_set_key_pressed() && edit_value == 5)
                     {
 
-                        ui_state = SOP;
+                        g_ui_state = SOP;
                     }
                     break;
 
                 case SOP:
-                    TM1637_DisplayString("S.OP"); // S.OP
-                    if (key_set_pressed())
+                    tm1637_display_text("S.OP"); // S.OP
+                    if (is_set_key_pressed())
                     {
 
-                        temp = config.target_voltage;
-                        set_max_min(MAX_TARGET_VOLTAGE, MIN_TARGET_VOLTAGE);
-                        ui_state = TARGET_VOLTAGE;
+                        edit_value = g_config.target_voltage;
+                        set_edit_bounds(MAX_TARGET_VOLTAGE, MIN_TARGET_VOLTAGE);
+                        g_ui_state = TARGET_VOLTAGE;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = POD;
+                        g_ui_state = POD;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = UI_US_EXIT;
+                        g_ui_state = UI_US_EXIT;
                     }
                     break;
 
                 case TARGET_VOLTAGE:
-                    TM1637_DisplayNumber((unsigned int)temp);
-                    if (key_set_pressed())
+                    tm1637_display_number((unsigned int)edit_value);
+                    if (is_set_key_pressed())
                     {
+                        int16_t old_target = target_voltage;
+                        int16_t new_target = edit_value;
+                        int16_t delta = new_target - old_target;
 
-                        config.target_voltage = temp;
-                        target = temp;
-                        ui_state = SOP;
+                        g_config.target_voltage = new_target;
+                        target_voltage = new_target;
+
+                        g_config.input_low = clamp_i16(g_config.input_low + delta,
+                                                    MIN_INPUT_LOW,
+                                                    target_voltage - MAX_INPUT_LOW);
+
+                        g_config.input_high = clamp_i16(g_config.input_high + delta,
+                                                     target_voltage + MIN_INPUT_HIGH,
+                                                     MAX_INPUT_HIGH);
+
+                        g_config.output_low = clamp_i16(g_config.output_low + delta,
+                                                     MIN_OUTPUT_LOW,
+                                                     target_voltage - MAX_OUTPUT_LOW);
+
+                        g_config.output_high = clamp_i16(g_config.output_high + delta,
+                                                      target_voltage + MIN_OUTPUT_HIGH,
+                                                      MAX_OUTPUT_HIGH);
+
+                        input_low_limit = g_config.input_low;
+                        input_high_limit = g_config.input_high;
+                        output_low_limit = g_config.output_low;
+                        output_high_limit = g_config.output_high;
+                        g_ui_state = SOP;
                     }
                     break;
 
                 case POD:
-                    TM1637_DisplayString("DLY"); // DLY
-                    if (key_set_pressed())
+                    tm1637_display_text("DLY"); // DLY
+                    if (is_set_key_pressed())
                     {
 
-                        temp = config.on_delay;
-                        set_max_min(MAX_ON_DELAY, MIN_ON_DELAY);
-                        ui_state = ON_DELAY_SET;
+                        edit_value = g_config.on_delay;
+                        set_edit_bounds(MAX_ON_DELAY, MIN_ON_DELAY);
+                        g_ui_state = ON_DELAY_SET;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = IPL;
+                        g_ui_state = IPL;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = SOP;
+                        g_ui_state = SOP;
                     }
                     break;
 
                 case ON_DELAY_SET:
-                    TM1637_DisplayNumber((unsigned int)temp);
-                    if (key_set_pressed())
+                    tm1637_display_number((unsigned int)edit_value);
+                    if (is_set_key_pressed())
                     {
 
-                        config.on_delay = temp;
-                        pod_delay = (int)(config.on_delay * 4.16);
-                        ui_state = POD;
+                        g_config.on_delay = edit_value;
+                        power_on_delay_ticks = (int)(g_config.on_delay * 4.16);
+                        g_ui_state = POD;
                     }
                     break;
 
                 case IPL:
-                    TM1637_DisplayString("IP.L"); // IP.L
-                    if (key_set_pressed())
+                    tm1637_display_text("IP.L"); // IP.L
+                    if (is_set_key_pressed())
                     {
 
-                        temp = config.input_low;
-                        set_max_min(target - MAX_INPUT_LOW, MIN_INPUT_LOW);
-                        ui_state = INPUT_LOW_SET;
+                        edit_value = g_config.input_low;
+                        set_edit_bounds(target_voltage - MAX_INPUT_LOW, MIN_INPUT_LOW);
+                        g_ui_state = INPUT_LOW_SET;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = IN_HIGH;
+                        g_ui_state = IN_HIGH;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = POD;
+                        g_ui_state = POD;
                     }
                     break;
 
                 case INPUT_LOW_SET:
-                    TM1637_DisplayNumber((unsigned int)temp);
-                    if (key_set_pressed())
+                    tm1637_display_number((unsigned int)edit_value);
+                    if (is_set_key_pressed())
                     {
 
-                        config.input_low = temp;
-                        in_low = temp;
-                        ui_state = IPL;
+                        g_config.input_low = edit_value;
+                        input_low_limit = edit_value;
+                        g_ui_state = IPL;
                     }
                     break;
 
                 case IN_HIGH:
-                    TM1637_DisplayString("IP.H"); // IP.H
-                    if (key_set_pressed())
+                    tm1637_display_text("IP.H"); // IP.H
+                    if (is_set_key_pressed())
                     {
 
-                        temp = config.input_high;
-                        set_max_min(MAX_INPUT_HIGH, target + MIN_INPUT_HIGH);
-                        ui_state = INPUT_HIGH_SET;
+                        edit_value = g_config.input_high;
+                        set_edit_bounds(MAX_INPUT_HIGH, target_voltage + MIN_INPUT_HIGH);
+                        g_ui_state = INPUT_HIGH_SET;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = OPL;
+                        g_ui_state = OPL;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = IPL;
+                        g_ui_state = IPL;
                     }
                     break;
 
                 case INPUT_HIGH_SET:
-                    TM1637_DisplayNumber((unsigned int)temp);
-                    if (key_set_pressed())
+                    tm1637_display_number((unsigned int)edit_value);
+                    if (is_set_key_pressed())
                     {
 
-                        config.input_high = temp;
-                        in_high = temp;
-                        ui_state = IN_HIGH;
+                        g_config.input_high = edit_value;
+                        input_high_limit = edit_value;
+                        g_ui_state = IN_HIGH;
                     }
                     break;
 
                 case OPL:
-                    TM1637_DisplayString("OP.L"); // OP.L
-                    if (key_set_pressed())
+                    tm1637_display_text("OP.L"); // OP.L
+                    if (is_set_key_pressed())
                     {
 
-                        temp = config.output_low;
-                        set_max_min(target - MAX_OUTPUT_LOW, MIN_OUTPUT_LOW);
-                        ui_state = OUTPUT_LOW_SET;
+                        edit_value = g_config.output_low;
+                        set_edit_bounds(target_voltage - MAX_OUTPUT_LOW, MIN_OUTPUT_LOW);
+                        g_ui_state = OUTPUT_LOW_SET;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = OPH;
+                        g_ui_state = OPH;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = IN_HIGH;
+                        g_ui_state = IN_HIGH;
                     }
                     break;
 
                 case OUTPUT_LOW_SET:
-                    TM1637_DisplayNumber((unsigned int)temp);
-                    if (key_set_pressed())
+                    tm1637_display_number((unsigned int)edit_value);
+                    if (is_set_key_pressed())
                     {
 
-                        config.output_low = temp;
-                        out_low = temp;
-                        ui_state = OPL;
+                        g_config.output_low = edit_value;
+                        output_low_limit = edit_value;
+                        g_ui_state = OPL;
                     }
                     break;
 
                 case OPH:
-                    TM1637_DisplayString("OP.H"); // OP.H
-                    if (key_set_pressed())
+                    tm1637_display_text("OP.H"); // OP.H
+                    if (is_set_key_pressed())
                     {
 
-                        temp = config.output_high;
-                        set_max_min(MAX_OUTPUT_HIGH, target + MIN_OUTPUT_HIGH);
-                        ui_state = OUTPUT_HIGH_SET;
+                        edit_value = g_config.output_high;
+                        set_edit_bounds(MAX_OUTPUT_HIGH, target_voltage + MIN_OUTPUT_HIGH);
+                        g_ui_state = OUTPUT_HIGH_SET;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = HLT;
+                        g_ui_state = HLT;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = OPL;
+                        g_ui_state = OPL;
                     }
                     break;
 
                 case OUTPUT_HIGH_SET:
-                    TM1637_DisplayNumber((unsigned int)temp);
-                    if (key_set_pressed())
+                    tm1637_display_number((unsigned int)edit_value);
+                    if (is_set_key_pressed())
                     {
 
-                        config.output_high = temp;
-                        out_high = temp;
-                        ui_state = OPH;
+                        g_config.output_high = edit_value;
+                        output_high_limit = edit_value;
+                        g_ui_state = OPH;
                     }
                     break;
 
                 case HLT:
-                    TM1637_DisplayString("HL.T"); // HL.T
-                    if (key_set_pressed())
+                    tm1637_display_text("HL.T"); // HL.T
+                    if (is_set_key_pressed())
                     {
 
-                        temp = config.hlt_delay;
-                        set_max_min(60, 0);
-                        ui_state = HLT_DELAY_SET;
+                        edit_value = g_config.hlt_delay;
+                        set_edit_bounds(60, 0);
+                        g_ui_state = HLT_DELAY_SET;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = DIS;
+                        g_ui_state = DIS;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = OPH;
+                        g_ui_state = OPH;
                     }
                     break;
 
                 case HLT_DELAY_SET:
-                    TM1637_DisplayNumber((unsigned int)temp);
-                    if (key_set_pressed())
+                    tm1637_display_number((unsigned int)edit_value);
+                    if (is_set_key_pressed())
                     {
 
-                        config.hlt_delay = temp;
-                        hlt = (int)(temp * 4.44);
-                        ui_state = HLT;
+                        g_config.hlt_delay = edit_value;
+                        hi_lo_trip_ticks = (int)(edit_value * 4.44);
+                        g_ui_state = HLT;
                     }
                     break;
 
                 case DIS:
-                    TM1637_DisplayString("DIS");
-                    if (key_set_pressed())
+                    tm1637_display_text("DIS");
+                    if (is_set_key_pressed())
                     {
 
-                        temp = 5;
-                        ui_state = INPUT_VOLTAGE;
+                        edit_value = 5;
+                        g_ui_state = INPUT_VOLTAGE;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = CON;
+                        g_ui_state = UI_US_EXIT;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = HLT;
+                        g_ui_state = HLT;
                     }
                     break;
 
                 case INPUT_VOLTAGE:
-                    TM1637_DisplayString("IP");
-                    if (key_set_pressed())
+                    tm1637_display_text("IP");
+                    if (is_set_key_pressed())
                     {
 
-                        config.dis = 1;
-                        set_dis();
-                        ui_state = DIS;
+                        g_config.display_mode = 1;
+                        update_display_cycle_selection();
+                        g_ui_state = DIS;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = OP;
+                        g_ui_state = OP;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = ALL;
+                        g_ui_state = ALL;
                     }
                     break;
 
                 case OP:
-                    TM1637_DisplayString("OP");
-                    if (key_set_pressed())
+                    tm1637_display_text("OP");
+                    if (is_set_key_pressed())
                     {
 
-                        config.dis = 2;
-                        set_dis();
-                        ui_state = DIS;
+                        g_config.display_mode = 2;
+                        update_display_cycle_selection();
+                        g_ui_state = DIS;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = OA;
+                        g_ui_state = OA;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = IP;
+                        g_ui_state = IP;
                     }
                     break;
 
                 case OA:
-                    TM1637_DisplayString("CUR"); // CUR
-                    if (key_set_pressed())
+                    tm1637_display_text("CUR"); // CUR
+                    if (is_set_key_pressed())
                     {
 
-                        config.dis = 3;
-                        set_dis();
-                        ui_state = DIS;
+                        g_config.display_mode = 3;
+                        update_display_cycle_selection();
+                        g_ui_state = DIS;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = ALL;
+                        g_ui_state = ALL;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = OP;
+                        g_ui_state = OP;
                     }
                     break;
 
                 case ALL:
-                    TM1637_DisplayString("ALL");
-                    if (key_set_pressed())
+                    tm1637_display_text("ALL");
+                    if (is_set_key_pressed())
                     {
 
-                        config.dis = 4;
-                        set_dis();
-                        ui_state = DIS;
+                        g_config.display_mode = 4;
+                        update_display_cycle_selection();
+                        g_ui_state = DIS;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = INPUT_VOLTAGE;
+                        g_ui_state = INPUT_VOLTAGE;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = OA;
-                    }
-                    break;
-
-                case CON:
-                    TM1637_DisplayString("CON");
-                    if (key_set_pressed())
-                    {
-
-                        ui_state = CON_ON;
-                    }
-                    if (key_up_pressed())
-                    {
-
-                        ui_state = EARTH;
-                    }
-                    if (key_down_pressed())
-                    {
-
-                        ui_state = DIS;
-                    }
-                    break;
-                case CON_ON:
-                    TM1637_DisplayString(STR_ON);
-                    if (key_set_pressed())
-                    {
-
-                        config.con = 1;
-                        ui_state = CON;
-                    }
-                    if (key_up_pressed())
-                    {
-
-                        ui_state = CON_OFF;
-                    }
-                    if (key_down_pressed())
-                    {
-
-                        ui_state = CON_OFF;
-                    }
-                    break;
-                case CON_OFF:
-                    TM1637_DisplayString(STR_OFF);
-                    if (key_set_pressed())
-                    {
-
-                        config.con = 0;
-                        ui_state = CON;
-                    }
-                    if (key_up_pressed())
-                    {
-
-                        ui_state = CON_ON;
-                    }
-                    if (key_down_pressed())
-                    {
-
-                        ui_state = CON_ON;
-                    }
-                    break;
-										
-					case EARTH:
-                    TM1637_DisplayString("S.ER");
-                    if (key_set_pressed())
-                    {
-
-                        ui_state = EARTH_ON;
-                    }
-                    if (key_up_pressed())
-                    {
-
-                        ui_state = EARTH_HIGH;
-                    }
-                    if (key_down_pressed())
-                    {
-
-                        ui_state = DIS;
-                    }
-                    break;
-                case EARTH_ON:
-                    TM1637_DisplayString(STR_ON);
-                    if (key_set_pressed())
-                    {
-
-                        config.earth_onoff = 1;
-                        ui_state = EARTH;
-                    }
-                    if (key_up_pressed())
-                    {
-
-                        ui_state = EARTH_OFF;
-                    }
-                    if (key_down_pressed())
-                    {
-
-                        ui_state = EARTH_OFF;
-                    }
-                    break;
-                case EARTH_OFF:
-                    TM1637_DisplayString(STR_OFF);
-                    if (key_set_pressed())
-                    {
-
-                         config.earth_onoff = 0;
-                        ui_state = EARTH;
-                    }
-                    if (key_up_pressed())
-                    {
-
-                        ui_state = EARTH_ON;
-                    }
-                    if (key_down_pressed())
-                    {
-
-                        ui_state = EARTH_ON;
-                    }
-                    break;
-										case EARTH_HIGH:
-                    TM1637_DisplayString("E.HI"); // OP.H
-                    if (key_set_pressed())
-                    {
-
-                        temp = config.earth_trip;
-                        set_max_min(50,10);
-                        ui_state = EARTH_HIGH_SET;
-                    }
-                    if (key_up_pressed())
-                    {
-
-                        ui_state = UI_US_EXIT;
-                    }
-                    if (key_down_pressed())
-                    {
-
-                        ui_state = EARTH;
-                    }
-                    break;
-
-                case EARTH_HIGH_SET:
-                    TM1637_DisplayNumber((unsigned int)temp);
-                    if (key_set_pressed())
-                    {
-
-                        config.earth_trip = temp;
-                        earth_cutoff = temp;
-                        ui_state = EARTH_HIGH;
+                        g_ui_state = OA;
                     }
                     break;
 
                 case FS:
-                    TM1637_DisplayString("F.ST"); // F.ST
-                    if (key_set_pressed())
+                    tm1637_display_text("F.ST"); // F.ST
+                    if (is_set_key_pressed())
                     {
 
-                        temp = 999;
-                        set_max_min(1000, 0);
-                        ui_state = FS_PASSWORD;
+                        edit_value = 999;
+                        set_edit_bounds(1000, 0);
+                        g_ui_state = FS_PASSWORD;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = UI_EXIT;
+                        g_ui_state = UI_EXIT;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = US;
+                        g_ui_state = US;
                     }
                     break;
 
                 case FS_PASSWORD:
-                    TM1637_DisplayNumber((unsigned int)temp);
-                    if (key_set_pressed() && temp == 998)
+                    tm1637_display_number((unsigned int)edit_value);
+                    if (is_set_key_pressed() && edit_value == 998)
                     {
 
-                        ui_state = REG;
+                        g_ui_state = REG;
                     }
                     break;
 
                 case REG:
-                    TM1637_DisplayString("S.RG"); // S.RG
-                    if (key_set_pressed())
+                    tm1637_display_text("S.RG"); // S.RG
+                    if (is_set_key_pressed())
                     {
 
-                        temp = config.regulation;
-                        set_max_min(MAX_REG, MIN_REG);
-                        ui_state = REGULATION_SET;
+                        edit_value = g_config.regulation;
+                        set_edit_bounds(MAX_REG, MIN_REG);
+                        g_ui_state = REGULATION_SET;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = OLR;
+                        g_ui_state = OLR;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = UI_FS_EXIT;
+                        g_ui_state = UI_FS_EXIT;
                     }
                     break;
 
                 case REGULATION_SET:
-                    TM1637_DisplayNumber((unsigned int)temp);
-                    if (key_set_pressed())
+                    tm1637_display_number((unsigned int)edit_value);
+                    if (is_set_key_pressed())
                     {
 
-                        config.regulation = temp;
-                        band_inc = temp;
-                        band_dec = (-1) * temp;
-                        ui_state = REG;
+                        g_config.regulation = edit_value;
+                        regulation_band_high = edit_value;
+                        regulation_band_low = (-1) * edit_value;
+                        g_ui_state = REG;
                     }
                     break;
 
                 case OLR:
-                    TM1637_DisplayString("OL.R"); // OL.R
-                    if (key_set_pressed())
+                    tm1637_display_text("OL.R"); // OL.R
+                    if (is_set_key_pressed())
                     {
 
-                        ui_state = OLR_ON;
+                        g_ui_state = OLR_ON;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = OL1;
+                        g_ui_state = OL1;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = REG;
+                        g_ui_state = REG;
                     }
                     break;
                 case OLR_ON:
-                    TM1637_DisplayString("AT");
-                    if (key_set_pressed())
+                    tm1637_display_text("AT");
+                    if (is_set_key_pressed())
                     {
 
-                        config.olr = 1;
-                        ui_state = OLR;
+                        g_config.olr = 1;
+                        g_ui_state = OLR;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = OLR_OFF;
+                        g_ui_state = OLR_OFF;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = OLR_OFF;
+                        g_ui_state = OLR_OFF;
                     }
                     break;
                 case OLR_OFF:
-                    TM1637_DisplayString("MN");
-                    if (key_set_pressed())
+                    tm1637_display_text("MN");
+                    if (is_set_key_pressed())
                     {
 
-                        config.olr = 0;
-                        ui_state = OLR;
+                        g_config.olr = 0;
+                        g_ui_state = OLR;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = OLR_ON;
+                        g_ui_state = OLR_ON;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = OLR_ON;
+                        g_ui_state = OLR_ON;
                     }
                     break;
 
                 case OL1:
-                    TM1637_DisplayString("S.OL"); // S.OL
-                    if (key_set_pressed())
+                    tm1637_display_text("S.OL"); // S.OL
+                    if (is_set_key_pressed())
                     {
 
-                        temp = config.ol1;
-                        set_max_min(MAX_OL1, MIN_OL1);
-                        ui_state = OL1_SET;
+                        edit_value = g_config.overload_level1;
+                        set_edit_bounds(MAX_OL1, MIN_OL1);
+                        g_ui_state = OL1_SET;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = OLT;
+                        g_ui_state = OLT;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = OLR;
+                        g_ui_state = OLR;
                     }
                     break;
 
                 case OL1_SET:
-                    TM1637_DisplayNumber((unsigned int)temp);
-                    if (key_set_pressed())
+                    tm1637_display_number((unsigned int)edit_value);
+                    if (is_set_key_pressed())
                     {
 
-                        config.ol1 = temp;
-                        ol1 = temp;
-                        config.ol2 = temp + 3;
-                        ui_state = OL1;
+                        g_config.overload_level1 = edit_value;
+                        overload_level1 = edit_value;
+                        g_config.overload_level2 = edit_value + 3;
+                        g_ui_state = OL1;
                     }
                     break;
 
                 case OLT:
-                    TM1637_DisplayString("OL.T"); // OL.T
-                    if (key_set_pressed())
+                    tm1637_display_text("OL.T"); // OL.T
+                    if (is_set_key_pressed())
                     {
 
-                        temp = config.olt;
-                        set_max_min(MAX_OL1_TIME, MIN_OL1_TIME);
-                        ui_state = OLT_SET;
+                        edit_value = g_config.overload_trip_ticks;
+                        set_edit_bounds(MAX_OL1_TIME, MIN_OL1_TIME);
+                        g_ui_state = OLT_SET;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = OL2;
+                        g_ui_state = OL2;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = OL1;
+                        g_ui_state = OL1;
                     }
                     break;
 
                 case OLT_SET:
-                    TM1637_DisplayNumber((unsigned int)temp);
-                    if (key_set_pressed())
+                    tm1637_display_number((unsigned int)edit_value);
+                    if (is_set_key_pressed())
                     {
 
-                        config.olt = temp;
-                        olt = (int)(config.olt * 4.44);
-                        ui_state = OLT;
+                        g_config.overload_trip_ticks = edit_value;
+                        overload_trip_ticks = (int)(g_config.overload_trip_ticks * 4.44);
+                        g_ui_state = OLT;
                     }
                     break;
 
                 case OL2:
-                    TM1637_DisplayString("OL2");
-                    if (key_set_pressed())
+                    tm1637_display_text("OL2");
+                    if (is_set_key_pressed())
                     {
 
-                        temp = config.ol2;
-                        ui_state = OL2_SET;
+                        edit_value = g_config.overload_level2;
+                        g_ui_state = OL2_SET;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = IPC;
+                        g_ui_state = IPC;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = OLT;
+                        g_ui_state = OLT;
                     }
                     break;
 
                 case OL2_SET:
-                    TM1637_DisplayNumber((unsigned int)temp);
-                    if (key_set_pressed())
+                    tm1637_display_number((unsigned int)edit_value);
+                    if (is_set_key_pressed())
                     {
 
-                        config.ol2 = temp;
-                        ol2 = temp;
-                        ui_state = OL2;
+                        g_config.overload_level2 = edit_value;
+                        overload_level2 = edit_value;
+                        g_ui_state = OL2;
                     }
                     break;
 
                 case IPC:
-                    TM1637_DisplayString("C.IP"); // C.IP
-                    if (key_set_pressed())
+                    tm1637_display_text("C.IP"); // C.IP
+                    if (is_set_key_pressed())
                     {
 
-                        v_in_raw = (int)(ac_voltage_rms_input(1));
-                        temp = v_in_raw;
-                        set_max_min(1000, 0);
-                        ui_state = IPC_SET;
+                        input_voltage_raw = (int)(measure_ac_voltage_rms(1));
+                        edit_value = input_voltage_raw;
+                        set_edit_bounds(1000, 0);
+                        g_ui_state = IPC_SET;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = OPC;
+                        g_ui_state = OPC;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = OL2;
+                        g_ui_state = OL2;
                     }
                     break;
 
                 case IPC_SET:
-                    TM1637_DisplayNumber((unsigned int)temp);
-                    if (key_set_pressed())
+                    tm1637_display_number((unsigned int)edit_value);
+                    if (is_set_key_pressed())
                     {
 
-                        config.ipc = (((float)temp) / v_in_raw);
-                        input_cal = config.ipc;
-                        ui_state = IPC;
+                        g_config.input_voltage_calibration = (((float)edit_value) / input_voltage_raw);
+                        input_calibration = g_config.input_voltage_calibration;
+                        g_ui_state = IPC;
                     }
                     break;
 
                 case OPC:
-                    TM1637_DisplayString("C.OP"); // C.OP
-                    if (key_set_pressed())
+                    tm1637_display_text("C.OP"); // C.OP
+                    if (is_set_key_pressed())
                     {
 
-                        v_out_raw = (int)(ac_voltage_rms_input(0));
-                        temp = 230;
-                        set_max_min(1000, 0);
-                        ui_state = OPC_SET;
+                        output_voltage_raw = (int)(measure_ac_voltage_rms(0));
+                        edit_value = 230;
+                        set_edit_bounds(1000, 0);
+                        g_ui_state = OPC_SET;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = OAC;
+                        g_ui_state = OAC;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = IPC;
+                        g_ui_state = IPC;
                     }
                     break;
 
                 case OPC_SET:
-                    TM1637_DisplayNumber((unsigned int)temp);
-                    if (key_set_pressed())
+                    tm1637_display_number((unsigned int)edit_value);
+                    if (is_set_key_pressed())
                     {
 
-                        config.opc = (float)(((float)temp) / v_out_raw);
-                        output_cal = config.opc;
-                        ui_state = OPC;
+                        g_config.output_voltage_calibration = (float)(((float)edit_value) / output_voltage_raw);
+                        output_calibration = g_config.output_voltage_calibration;
+                        g_ui_state = OPC;
                     }
                     break;
 
                 case OAC:
-                    TM1637_DisplayString("C.CU"); // C.CU
-                    if (key_set_pressed())
+                    tm1637_display_text("C.CU"); // C.CU
+                    if (is_set_key_pressed())
                     {
 
-                        temp = ac_current_rms();
-                        set_max_min(1000, 0);
-                        ui_state = OAC_SET;
+                        edit_value = measure_ac_current_rms();
+                        set_edit_bounds(1000, 0);
+                        g_ui_state = OAC_SET;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = UI_FS_EXIT;
+                        g_ui_state = CON;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = OPC;
+                        g_ui_state = OPC;
                     }
                     break;
 
                 case OAC_SET:
-                    // TM1637_DisplayNumber((unsigned int)temp);
-                    TM1637_DisplayCurrent((float)temp / 10);
-                    if (key_set_pressed())
+                    // tm1637_display_number((unsigned int)edit_value);
+                    tm1637_display_current((float)edit_value / 10);
+                    if (is_set_key_pressed())
                     {
-                        if (i_rms > 0.01)
+                        if (output_current_rms > 0.01)
                         {
-                            config.oac = (float)temp / (i_rms * 10);
+                            g_config.current_calibration_factor = (float)edit_value / (output_current_rms * 10);
                         }
-                        current_cal = config.oac;
-                        ui_state = OAC;
+                        current_calibration = g_config.current_calibration_factor;
+                        g_ui_state = OAC;
                     }
                     break;
 
+                case CON:
+                    tm1637_display_text("CON");
+                    if (is_set_key_pressed())
+                    {
+
+                        g_ui_state = CON_ON;
+                    }
+                    if (is_up_key_pressed())
+                    {
+
+                        g_ui_state = EARTH;
+                    }
+                    if (is_down_key_pressed())
+                    {
+
+                        g_ui_state = OAC;
+                    }
+                    break;
+                case CON_ON:
+                    tm1637_display_text(STR_ON);
+                    if (is_set_key_pressed())
+                    {
+
+                        g_config.contactor_monitor_enabled = 1;
+                        g_ui_state = CON;
+                    }
+                    if (is_up_key_pressed())
+                    {
+
+                        g_ui_state = CON_OFF;
+                    }
+                    if (is_down_key_pressed())
+                    {
+
+                        g_ui_state = CON_OFF;
+                    }
+                    break;
+                case CON_OFF:
+                    tm1637_display_text(STR_OFF);
+                    if (is_set_key_pressed())
+                    {
+
+                        g_config.contactor_monitor_enabled = 0;
+                        g_ui_state = CON;
+                    }
+                    if (is_up_key_pressed())
+                    {
+
+                        g_ui_state = CON_ON;
+                    }
+                    if (is_down_key_pressed())
+                    {
+
+                        g_ui_state = CON_ON;
+                    }
+                    break;
+
+					case EARTH:
+                    tm1637_display_text("S.ER");
+                    if (is_set_key_pressed())
+                    {
+
+                        g_ui_state = EARTH_ON;
+                    }
+                    if (is_up_key_pressed())
+                    {
+
+                        g_ui_state = UI_FS_EXIT;
+                    }
+                    if (is_down_key_pressed())
+                    {
+
+                        g_ui_state = CON;
+                    }
+                    break;
+                case EARTH_ON:
+                    tm1637_display_text(STR_ON);
+                    if (is_set_key_pressed())
+                    {
+
+                        g_config.earth_monitor_enabled = 1;
+                        g_ui_state = EARTH;
+                    }
+                    if (is_up_key_pressed())
+                    {
+
+                        g_ui_state = EARTH_OFF;
+                    }
+                    if (is_down_key_pressed())
+                    {
+
+                        g_ui_state = EARTH_OFF;
+                    }
+                    break;
+                case EARTH_OFF:
+                    tm1637_display_text(STR_OFF);
+                    if (is_set_key_pressed())
+                    {
+
+                         g_config.earth_monitor_enabled = 0;
+                        g_ui_state = EARTH;
+                    }
+                    if (is_up_key_pressed())
+                    {
+
+                        g_ui_state = EARTH_ON;
+                    }
+                    if (is_down_key_pressed())
+                    {
+
+                        g_ui_state = EARTH_ON;
+                    }
+                    break;
+					case EARTH_HIGH:
+                    tm1637_display_text("E.HI"); // OP.H
+                    if (is_set_key_pressed())
+                    {
+
+                        edit_value = g_config.earth_trip;
+                        set_edit_bounds(50,10);
+                        g_ui_state = EARTH_HIGH_SET;
+                    }
+                    if (is_up_key_pressed())
+                    {
+
+                            g_ui_state = IR_HIGH;
+                    }
+                    if (is_down_key_pressed())
+                    {
+
+                        g_ui_state = EARTH;
+                    }
+                    break;
+
+                case EARTH_HIGH_SET:
+                    tm1637_display_number((unsigned int)edit_value);
+                    if (is_set_key_pressed())
+                    {
+
+                        g_config.earth_trip = edit_value;
+                        earth_trip_threshold = edit_value;
+                        g_ui_state = EARTH_HIGH;
+                    }
+                    break;
+
+                    case IR_HIGH:
+                        tm1637_display_text("IR.H");
+                        if (is_set_key_pressed())
+                        {
+
+                            edit_value = g_config.ir_high;
+                            set_edit_bounds(300,250);
+                            g_ui_state = IR_HIGH_SET;
+                        }
+                        if (is_up_key_pressed())
+                        {
+
+                            g_ui_state = IR_LOW;
+                        }
+                        if (is_down_key_pressed())
+                        {
+
+                            g_ui_state = EARTH_HIGH;
+                        }
+                        break;
+
+                    case IR_HIGH_SET:
+                        tm1637_display_number((unsigned int)edit_value);
+                        if (is_set_key_pressed())
+                        {
+
+                            g_config.ir_high = edit_value;
+                            ir_high = edit_value;
+                            g_ui_state = IR_HIGH;
+                        }
+                        break;
+
+                    case IR_LOW:
+                        tm1637_display_text("IR.L");
+                        if (is_set_key_pressed())
+                        {
+
+                            edit_value = g_config.ir_low;
+                            set_edit_bounds(190, 140);
+                            g_ui_state = IR_LOW_SET;
+                        }
+                        if (is_up_key_pressed())
+                        {
+
+                            g_ui_state = UI_FS_EXIT;
+                        }
+                        if (is_down_key_pressed())
+                        {
+
+                            g_ui_state = IR_HIGH;
+                        }
+                        break;
+
+                    case IR_LOW_SET:
+                        tm1637_display_number((unsigned int)edit_value);
+                        if (is_set_key_pressed())
+                        {
+
+                            g_config.ir_low = edit_value;
+                            ir_low = edit_value;
+                            g_ui_state = IR_LOW;
+                        }
+                        break;
+
                 case UI_EXIT:
-                    TM1637_DisplayString("-E-");
-                    if (key_set_pressed())
+                    tm1637_display_text("-E-");
+                    if (is_set_key_pressed())
                     {
 
-                        setting_press = 0;
-                        Save_Config();
-                        ui_state = UI_NORMAL;
-                        update_rate = 20;
+                        settings_page_active = 0;
+                        save_config_to_flash();
+                        g_ui_state = UI_NORMAL;
+                        display_update_ticks = 20;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = AUT;
+                        g_ui_state = AUT;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = FS;
+                        g_ui_state = FS;
                     }
                     break;
 
                 case UI_US_EXIT:
-                    TM1637_DisplayString(STR_END);
-                    if (key_set_pressed())
+                    tm1637_display_text(STR_END);
+                    if (is_set_key_pressed())
                     {
 
-                        ui_state = US;
+                        g_ui_state = US;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = SOP;
+                        g_ui_state = SOP;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = CON;
+                        g_ui_state = DIS;
                     }
                     break;
 
                 case UI_FS_EXIT:
-                    TM1637_DisplayString(STR_END);
-                    if (key_set_pressed())
+                    tm1637_display_text(STR_END);
+                    if (is_set_key_pressed())
                     {
 
-                        ui_state = FS;
+                        g_ui_state = FS;
                     }
-                    if (key_up_pressed())
+                    if (is_up_key_pressed())
                     {
 
-                        ui_state = REG;
+                        g_ui_state = REG;
                     }
-                    if (key_down_pressed())
+                    if (is_down_key_pressed())
                     {
 
-                        ui_state = OAC;
+                        g_ui_state = OAC;
                     }
                 }
 
-                if (UP == 1)
+                if (BTN_UP == 1)
                 {
-                    ++up_counter;
-                    menu_counter = 0;
-                    if (up_counter > 50 && temp < max_number)
+                    ++up_press_counter;
+                    menu_timeout_counter = 0;
+                    if (up_press_counter > 30 && edit_value < edit_value_max)
                     {
-                        ++temp;
+                        ++edit_value;
                     }
-                    else if (up_counter % 4 == 0 && temp < max_number)
+                    else if (up_press_counter % 2 == 0 && edit_value < edit_value_max)
                     {
-                        ++temp;
-                    }
-                }
-                else if (DOWN == 1)
-                {
-                    ++down_counter;
-                    menu_counter = 0;
-                    if (down_counter > 50 && temp > min_number)
-                    {
-                        --temp;
-                    }
-                    else if (down_counter % 4 == 0 && temp > min_number)
-                    {
-                        --temp;
+                        ++edit_value;
                     }
                 }
-                if (UP == 0)
+                else if (BTN_DOWN == 1)
                 {
-                    up_counter = 0;
+                    ++down_press_counter;
+                    menu_timeout_counter = 0;
+                    if (down_press_counter > 30 && edit_value > edit_value_min)
+                    {
+                        --edit_value;
+                    }
+                    else if (down_press_counter % 2 == 0 && edit_value > edit_value_min)
+                    {
+                        --edit_value;
+                    }
                 }
-                if (DOWN == 0)
+                if (BTN_UP == 0)
                 {
-                    down_counter = 0;
+                    up_press_counter = 0;
                 }
-                if (menu_counter > 130)
+                if (BTN_DOWN == 0)
                 {
-                    menu_counter = 0;
-                    update_rate = 20;
-                    ui_state = UI_NORMAL;
+                    down_press_counter = 0;
+                }
+                if (menu_timeout_counter > 130)
+                {
+                    menu_timeout_counter = 0;
+                    display_update_ticks = 20;
+                    g_ui_state = UI_NORMAL;
                 }
             }
         }
@@ -2605,3 +2733,4 @@ void main(void)
         // Timer0_Delay(24000000,300,1000);
     }
 }
+
