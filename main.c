@@ -386,6 +386,8 @@ volatile unsigned int display_tick_counter = 0, set_key_hold_ticks = 0, startup_
 volatile unsigned int main_loop_counter = 0;
 volatile char regulation_band_high = 3, regulation_band_low = -3, input_voltage_sample_count = 0;
 volatile unsigned char manual_led_tick = 0;
+volatile unsigned char startup_delay_profile = 0;
+volatile unsigned int overload_recovery_seconds = 0;
 unsigned char display_page_index = 0, display_page_start = 0, display_page_end = 2, voltage_scan_step = 1;
 unsigned char status_led_bitmap = 0;
 
@@ -859,37 +861,27 @@ void handle_trip(char n)
             set_status_led(LED_OVL, 1);
             if (trip_elapsed_ticks > overload_trip_ticks)
             {
-                P17 = 0;
-                P00 = 0;
-                P13 = 1;
-                P12 = 1;
-                // EA = 0;
-                trip_hold_ticks = 0;
-                trip_latched_flag = 1;
-                while (BTN_UP == 0 && trip_hold_ticks < 130)
+                if (g_config.olr == 1)
                 {
-                    tm1637_display_text("OL1");
-
-                    startup_timer_ticks = 0;
-                    while (startup_timer_ticks < 100)
-                    {
-                        P00 = 1;
-                    }
-                    startup_timer_ticks = 0;
-                    while (startup_timer_ticks < 100)
-                    {
-                        P00 = 0;
-                    }
-                    ++trip_hold_ticks;
+                    start_overload_auto_recovery(1);
+                    output_current_rms = 0;
+                    P00 = 0;
+                    relay_enabled = 0;
+                    display_page_index = 1;
                 }
-
-                startup_complete = 0;
-                startup_timer_ticks = 0;
-                startup_delay_active = 1;
-                output_current_rms = 0;
-                P00 = 0;
-                relay_enabled = 0;
-                display_page_index = 1;
+                else
+                {
+                    while (BTN_UP == 0)
+                    {
+                        tm1637_display_text("OL1");
+                        buzzer_on();
+                    }
+                    start_manual_restart_delay();
+                    output_current_rms = 0;
+                    P00 = 0;
+                    relay_enabled = 0;
+                    display_page_index = 1;
+                }
             }
             else
             {
@@ -966,29 +958,31 @@ void handle_trip(char n)
             P12 = 1;
             // EA = 0;
             set_status_led(LED_OVL, 1);
-            trip_hold_ticks = 0;
-            while (BTN_UP == 0 && trip_hold_ticks < 130)
+            if (g_config.olr == 1)
             {
-                tm1637_display_text("OL2");
-
-                startup_timer_ticks = 0;
-                while (startup_timer_ticks < 100)
-                {
-                    P00 = 1;
-                }
-                startup_timer_ticks = 0;
-                while (startup_timer_ticks < 100)
-                {
-                    P00 = 0;
-                }
-                ++trip_hold_ticks;
+                start_overload_auto_recovery(2);
+                output_current_rms = 0;
+                relay_enabled = 0;
+                display_page_index = 1;
             }
-            startup_complete = 0;
-            startup_timer_ticks = 0;
-            output_current_rms = 0;
-            startup_delay_active = 1;
-            relay_enabled = 0;
-            display_page_index = 1;
+
+
+
+
+            else
+
+            {
+                while (BTN_UP == 0)
+                {
+                    tm1637_display_text("OL2");
+                    buzzer_on();
+                }
+                start_manual_restart_delay();
+                output_current_rms = 0;
+                startup_delay_active = 1;
+                relay_enabled = 0;
+                display_page_index = 1;
+            }
 					}
             break;
 
@@ -1213,6 +1207,8 @@ void timer0_isr(void) interrupt 1
         {
             startup_complete = 1;
             startup_delay_active = 0;
+            startup_delay_profile = 0;
+            overload_recovery_seconds = 0;
             P00 = 0;
             // tm1637_display_text("IP");
         }
@@ -1224,11 +1220,29 @@ void timer0_isr(void) interrupt 1
         buzzer_on();
         if (((startup_timer_ticks / ticks_per_second) & 1) == 0)
         {
-            tm1637_display_text("DLY");
+            if (startup_delay_profile == 1)
+            {
+                tm1637_display_text("OL1");
+            }
+            else if (startup_delay_profile == 2)
+            {
+                tm1637_display_text("OL2");
+            }
+            else
+            {
+                tm1637_display_text("DLY");
+            }
         }
         else
         {
-            tm1637_display_number(startup_countdown_seconds - (startup_timer_ticks / ticks_per_second));
+            if (startup_delay_profile == 0)
+            {
+                tm1637_display_number(startup_countdown_seconds - (startup_timer_ticks / ticks_per_second));
+            }
+            else
+            {
+                tm1637_display_number(overload_recovery_seconds - (startup_timer_ticks / ticks_per_second));
+            }
         }
         //(startup_countdown_seconds - (startup_timer_ticks/13))
     }
@@ -1291,11 +1305,35 @@ void start_reconnect_delay(void)
     power_on_delay_ticks = (unsigned int)(g_config.hlt_delay * 5);
     ticks_per_second = 5;
     startup_countdown_seconds = (unsigned char)(power_on_delay_ticks / 5);
+    startup_delay_profile = 0;
     startup_complete = 0;
     startup_delay_active = 1;
     startup_timer_ticks = 0;
     relay_enabled = 0;
-    set_status_led(LED_DELAY, 1);
+}
+
+void start_manual_restart_delay(void)
+{
+    power_on_delay_ticks = (unsigned int)(g_config.on_delay * 5);
+    ticks_per_second = 5;
+    startup_countdown_seconds = (unsigned char)(power_on_delay_ticks / 5);
+    startup_delay_profile = 0;
+    startup_complete = 0;
+    startup_delay_active = 1;
+    startup_timer_ticks = 0;
+    relay_enabled = 0;
+}
+
+void start_overload_auto_recovery(unsigned char profile)
+{
+    power_on_delay_ticks = 300U * 5U;
+    ticks_per_second = 5;
+    overload_recovery_seconds = 300;
+    startup_delay_profile = profile;
+    startup_complete = 0;
+    startup_delay_active = 1;
+    startup_timer_ticks = 0;
+    relay_enabled = 0;
 }
 
 //-------------------------------------------------------------------------------------
@@ -1355,7 +1393,6 @@ void main(void)
         save_config_to_flash(); // store defaults
     }
     apply_config_to_runtime();
-    set_status_led(LED_DELAY, 1);
     startup_countdown_seconds = (int)(power_on_delay_ticks / 5);
     input_voltage = (int)(measure_ac_voltage_rms(1) * input_calibration);
     timer0_init_2ms();
@@ -1448,9 +1485,16 @@ void main(void)
         }
         else if (startup_delay_active == 1)
         {
-            power_on_delay_ticks = (int)(g_config.on_delay * 12);
-            ticks_per_second = 12;
-            startup_countdown_seconds = (int)(power_on_delay_ticks / 12);
+            if (startup_delay_profile == 0)
+            {
+                power_on_delay_ticks = (int)(g_config.on_delay * 12);
+                ticks_per_second = 12;
+                startup_countdown_seconds = (int)(power_on_delay_ticks / 12);
+            }
+            else
+            {
+                ticks_per_second = 5;
+            }
             EA = 1;
         }
         else
