@@ -2405,7 +2405,7 @@ void main(void)
                         g_ui_state = OPC;
                     }
                     break;
-`
+
                 case OAC_SET:
                     // tm1637_display_number((unsigned int)edit_value);
                     tm1637_display_current((float)edit_value / 10);
