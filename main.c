@@ -1499,28 +1499,11 @@ void main(void)
                 error_count_ticks = 0;
             }
             // error_count_ticks = 0;
-                        if (startup_delay_profile != 0)
-                        {
-                            /* After OL1/OL2 auto timer, always pass through normal startup DLY delay. */
-                            start_manual_restart_delay();
-                        }
-                        else
-                        {
-                            startup_complete = 1;
-                            startup_delay_active = 0;
-                            startup_delay_profile = 0;
-                            overload_recovery_seconds = 0;
-                            P00 = 0;
-                            // tm1637_display_text("IP");
-                        }
-                ticks_per_second = 12;
-                startup_countdown_seconds = (int)(power_on_delay_ticks / 12);
+            if (startup_delay_profile != 0 && BTN_UP == 1)
+            {
+                /* Manual reset is allowed even during auto-recovery mode. */
+                start_manual_restart_delay();
             }
-                if (startup_delay_profile != 0 && BTN_UP == 1)
-                {
-                    /* Manual reset is allowed even during auto-recovery mode. */
-                    start_manual_restart_delay();
-                }
 
             else
             {
