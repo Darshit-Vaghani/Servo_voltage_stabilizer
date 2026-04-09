@@ -53,9 +53,9 @@ typedef struct
     uint8_t contactor_monitor_enabled;        // bit (use 0/1)
     uint8_t regulation; // 8 bit
     uint8_t olr;        // bit
-    uint16_t overload_level1;       // 16 bit (tenths of ampere)
+    uint8_t overload_level1;        // 8 bit
     uint8_t overload_trip_ticks;        // 8 bit
-    uint16_t overload_level2;       // 16 bit (tenths of ampere)
+    uint8_t overload_level2;        // 8 bit
 	uint8_t earth_monitor_enabled;
 
     float input_voltage_calibration; // 4
@@ -376,8 +376,7 @@ bit startup_complete = 0;
 bit error_flag = 0, auto_mode_enabled = 1, startup_delay_active = 1;
 bit buzzer_output = 0;
 bit settings_page_active = 0, up_key_latched = 0, down_key_latched = 0, set_key_latched = 0;
-unsigned int error_count_ticks = 0, trip_hold_ticks = 0, trip_display_cycle = 0, output_high_limit = 270, output_low_limit = 210, input_high_limit = 260, input_low_limit = 180, hi_lo_trip_ticks = 5, overload_trip_ticks = 120, power_on_delay_ticks = 41,earth_trip_threshold= 15;
-uint16_t overload_level1 = 3, overload_level2 = 5;
+unsigned int error_count_ticks = 0, trip_hold_ticks = 0, trip_display_cycle = 0, output_high_limit = 270, output_low_limit = 210, input_high_limit = 260, input_low_limit = 180, overload_level1 = 3, overload_level2 = 5, hi_lo_trip_ticks = 5, overload_trip_ticks = 120, power_on_delay_ticks = 41,earth_trip_threshold= 15;
 unsigned char ir_high = 270, ir_low = 150;
 int zero_cross_wait_counter = 0, edit_value = 0;
 unsigned char display_update_ticks = 25, startup_countdown_seconds = 10, ticks_per_second = 5;
@@ -410,8 +409,6 @@ unsigned char status_led_bitmap = 0;
 //------------------------------------------------------------------------------------
 
 //------------------------Function Prototype-------------------------------------
-unsigned char TM1637_CharToSeg(char c);
-
 void delay_us(unsigned int us);
 
 int read_adc_sample(void);
@@ -436,20 +433,9 @@ uint16_t calculate_crc16(uint8_t *buf, uint16_t len);
 void save_config_to_flash(void);
 bit load_config_from_flash(void);
 unsigned long isqrt32(unsigned long x);
-void set_status_led(uint8_t led, bit state);
-bit is_up_key_pressed(void);
-bit is_down_key_pressed(void);
-bit is_set_key_pressed(void);
-void update_display_cycle_selection(void);
 void buzzer_on();
-void timer0_isr(void) interrupt 1;
-void apply_config_to_runtime(void);
-void set_edit_bounds(int max, int min);
-static int16_t clamp_i16(int16_t value, int16_t min_v, int16_t max_v);
-void start_reconnect_delay(void);
-void start_manual_restart_delay(void);
 void start_overload_auto_recovery(unsigned char profile);
-void main(void);
+void start_manual_restart_delay(void);
 //--------------------------------------------------------------------------------
 
 //-------------------Delay US Function For Display--------------------------------
@@ -460,8 +446,8 @@ void delay_us(unsigned int us)
         _nop_();
         _nop_();
         _nop_();
-        _nop_();
-    }
+        _nop_();    
+		}
 }
 //-----------------------------------------------------------------------------------
 
@@ -981,10 +967,6 @@ void handle_trip(char n)
                 relay_enabled = 0;
                 display_page_index = 1;
             }
-
-
-
-
             else
 
             {
@@ -1330,11 +1312,10 @@ void start_reconnect_delay(void)
 
 void start_manual_restart_delay(void)
 {
-    power_on_delay_ticks = (unsigned int)(g_config.on_delay * 12);
-    ticks_per_second = 12;
-    startup_countdown_seconds = (unsigned char)(power_on_delay_ticks / 12);
+    power_on_delay_ticks = (unsigned int)(g_config.on_delay * 5);
+    ticks_per_second = 5;
+    startup_countdown_seconds = (unsigned char)(power_on_delay_ticks / 5);
     startup_delay_profile = 0;
-    overload_recovery_seconds = 0;
     startup_complete = 0;
     startup_delay_active = 1;
     startup_timer_ticks = 0;
@@ -1343,8 +1324,8 @@ void start_manual_restart_delay(void)
 
 void start_overload_auto_recovery(unsigned char profile)
 {
-    power_on_delay_ticks = 300U * 12U;
-    ticks_per_second = 12;
+    power_on_delay_ticks = 300U * 5U;
+    ticks_per_second = 5;
     overload_recovery_seconds = 300;
     startup_delay_profile = profile;
     startup_complete = 0;
@@ -1499,12 +1480,15 @@ void main(void)
                 error_count_ticks = 0;
             }
             // error_count_ticks = 0;
-            if (startup_delay_profile != 0 && BTN_UP == 1)
+        }
+        else if (startup_delay_active == 1)
+        {
+            if (startup_delay_profile == 0)
             {
-                /* Manual reset is allowed even during auto-recovery mode. */
-                start_manual_restart_delay();
+                power_on_delay_ticks = (int)(g_config.on_delay * 12);
+                ticks_per_second = 12;
+                startup_countdown_seconds = (int)(power_on_delay_ticks / 12);
             }
-
             else
             {
                 ticks_per_second = 5;
@@ -1582,11 +1566,11 @@ void main(void)
             handle_trip(4);
         }
         
-        else if (output_current_rms > ((float)overload_level2 / 10.0f))
+        else if (output_current_rms > overload_level2)
         {
             handle_trip(7);
         }
-        else if (output_current_rms > ((float)overload_level1 / 10.0f))
+        else if (output_current_rms > overload_level1)
         {
             handle_trip(3);
         }
@@ -2303,7 +2287,7 @@ void main(void)
                     break;
 
                 case OL1_SET:
-                    tm1637_display_current((float)edit_value / 10.0f);
+                    tm1637_display_number((unsigned int)edit_value);
                     if (is_set_key_pressed())
                     {
 
@@ -2367,7 +2351,7 @@ void main(void)
                     break;
 
                 case OL2_SET:
-                    tm1637_display_current((float)edit_value / 10.0f);
+                    tm1637_display_number((unsigned int)edit_value);
                     if (is_set_key_pressed())
                     {
 
@@ -2793,4 +2777,3 @@ void main(void)
         // Timer0_Delay(24000000,300,1000);
     }
 }
-
