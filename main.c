@@ -246,7 +246,7 @@ ui_state_id_t g_ui_state;
 #define SEG_J 0x1E
 // #define SEG_K 0x75 // approx
 #define SEG_L 0x38
-#define SEG_M 0x37 // approx
+#define SEG_M 0x55 // approx
 #define SEG_N 0x54
 #define SEG_O 0x3F
 #define SEG_P 0x73
@@ -866,7 +866,7 @@ void handle_trip(char n)
                 // EA = 0;
                 trip_hold_ticks = 0;
                 trip_latched_flag = 1;
-                while (BTN_UP != 1 && trip_hold_ticks < 130)
+                while (BTN_UP == 0 && trip_hold_ticks < 130)
                 {
                     tm1637_display_text("OL1");
 
@@ -967,7 +967,7 @@ void handle_trip(char n)
             // EA = 0;
             set_status_led(LED_OVL, 1);
             trip_hold_ticks = 0;
-            while (BTN_UP != 1 && trip_hold_ticks < 130)
+            while (BTN_UP == 0 && trip_hold_ticks < 130)
             {
                 tm1637_display_text("OL2");
 
@@ -1258,6 +1258,8 @@ void apply_config_to_runtime()
 	earth_trip_threshold = g_config.earth_trip;
     ir_high = g_config.ir_high;
     ir_low = g_config.ir_low;
+    auto_mode_enabled = g_config.auto_mode_status;
+    
 }
 
 //-----------------------------------------------------------------------------------
@@ -1468,12 +1470,12 @@ void main(void)
         if (auto_mode_enabled == 0 && g_ui_state == UI_NORMAL)
         {
             ++manual_led_tick;
-            if (manual_led_tick >= 50)
+            if (manual_led_tick >= 20)
             {
                 manual_led_tick = 0;
             }
 
-            set_status_led(LED_DELAY, manual_led_tick < 25);
+            set_status_led(LED_DELAY, manual_led_tick < 10);
 
             if (BTN_UP == 1)
             {
@@ -1658,7 +1660,7 @@ void main(void)
                 {
 
                 case AUT:
-                    tm1637_display_text("MOD");
+                    tm1637_display_text("AUT");
                     if (is_set_key_pressed())
                     {
 
@@ -1676,7 +1678,7 @@ void main(void)
                     }
                     break;
                 case AUT_ON:
-                    tm1637_display_text("AT");
+                    tm1637_display_text(STR_ON);
                     if (is_set_key_pressed())
                     {
 
@@ -1698,7 +1700,7 @@ void main(void)
                     break;
 
                 case AUT_OFF:
-                    tm1637_display_text("MN");
+                    tm1637_display_text(STR_OFF);
                     if (is_set_key_pressed())
                     {
 
@@ -2403,7 +2405,7 @@ void main(void)
                         g_ui_state = OPC;
                     }
                     break;
-
+`
                 case OAC_SET:
                     // tm1637_display_number((unsigned int)edit_value);
                     tm1637_display_current((float)edit_value / 10);
