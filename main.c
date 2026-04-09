@@ -409,6 +409,8 @@ unsigned char status_led_bitmap = 0;
 //------------------------------------------------------------------------------------
 
 //------------------------Function Prototype-------------------------------------
+unsigned char TM1637_CharToSeg(char c);
+
 void delay_us(unsigned int us);
 
 int read_adc_sample(void);
@@ -433,7 +435,20 @@ uint16_t calculate_crc16(uint8_t *buf, uint16_t len);
 void save_config_to_flash(void);
 bit load_config_from_flash(void);
 unsigned long isqrt32(unsigned long x);
+void set_status_led(uint8_t led, bit state);
+bit is_up_key_pressed(void);
+bit is_down_key_pressed(void);
+bit is_set_key_pressed(void);
+void update_display_cycle_selection(void);
 void buzzer_on();
+void timer0_isr(void) interrupt 1;
+void apply_config_to_runtime(void);
+void set_edit_bounds(int max, int min);
+static int16_t clamp_i16(int16_t value, int16_t min_v, int16_t max_v);
+void start_reconnect_delay(void);
+void start_manual_restart_delay(void);
+void start_overload_auto_recovery(unsigned char profile);
+void main(void);
 //--------------------------------------------------------------------------------
 
 //-------------------Delay US Function For Display--------------------------------
@@ -1314,10 +1329,11 @@ void start_reconnect_delay(void)
 
 void start_manual_restart_delay(void)
 {
-    power_on_delay_ticks = (unsigned int)(g_config.on_delay * 5);
-    ticks_per_second = 5;
-    startup_countdown_seconds = (unsigned char)(power_on_delay_ticks / 5);
+    power_on_delay_ticks = (unsigned int)(g_config.on_delay * 12);
+    ticks_per_second = 12;
+    startup_countdown_seconds = (unsigned char)(power_on_delay_ticks / 12);
     startup_delay_profile = 0;
+    overload_recovery_seconds = 0;
     startup_complete = 0;
     startup_delay_active = 1;
     startup_timer_ticks = 0;
@@ -1326,8 +1342,8 @@ void start_manual_restart_delay(void)
 
 void start_overload_auto_recovery(unsigned char profile)
 {
-    power_on_delay_ticks = 300U * 5U;
-    ticks_per_second = 5;
+    power_on_delay_ticks = 300U * 12U;
+    ticks_per_second = 12;
     overload_recovery_seconds = 300;
     startup_delay_profile = profile;
     startup_complete = 0;
@@ -1482,15 +1498,29 @@ void main(void)
                 error_count_ticks = 0;
             }
             // error_count_ticks = 0;
-        }
-        else if (startup_delay_active == 1)
-        {
-            if (startup_delay_profile == 0)
-            {
-                power_on_delay_ticks = (int)(g_config.on_delay * 12);
+                        if (startup_delay_profile != 0)
+                        {
+                            /* After OL1/OL2 auto timer, always pass through normal startup DLY delay. */
+                            start_manual_restart_delay();
+                        }
+                        else
+                        {
+                            startup_complete = 1;
+                            startup_delay_active = 0;
+                            startup_delay_profile = 0;
+                            overload_recovery_seconds = 0;
+                            P00 = 0;
+                            // tm1637_display_text("IP");
+                        }
                 ticks_per_second = 12;
                 startup_countdown_seconds = (int)(power_on_delay_ticks / 12);
             }
+                if (startup_delay_profile != 0 && BTN_UP == 1)
+                {
+                    /* Manual reset is allowed even during auto-recovery mode. */
+                    start_manual_restart_delay();
+                }
+
             else
             {
                 ticks_per_second = 5;
