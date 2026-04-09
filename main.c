@@ -53,9 +53,9 @@ typedef struct
     uint8_t contactor_monitor_enabled;        // bit (use 0/1)
     uint8_t regulation; // 8 bit
     uint8_t olr;        // bit
-    uint8_t overload_level1;        // 8 bit
+    uint16_t overload_level1;        // 8 bit
     uint8_t overload_trip_ticks;        // 8 bit
-    uint8_t overload_level2;        // 8 bit
+    uint16_t overload_level2;        // 8 bit
 	uint8_t earth_monitor_enabled;
 
     float input_voltage_calibration; // 4
@@ -364,7 +364,7 @@ unsigned char TM1637_CharToSeg(char c)
 uint16_t adc_data_ain;
 
 int output_voltage = 0, output_voltage_raw = 0;
-float output_current_rms = 0;
+float output_current_rms = 0,overload_level1 = 10.0, overload_level2 = 13.0;
 int input_voltage = 0, input_voltage_raw = 0;
 int contactor_voltage = 0,earth_voltage=0;
 float output_calibration = 0.92, input_calibration = 0.92, current_calibration = 1;
@@ -376,7 +376,7 @@ bit startup_complete = 0;
 bit error_flag = 0, auto_mode_enabled = 1, startup_delay_active = 1;
 bit buzzer_output = 0;
 bit settings_page_active = 0, up_key_latched = 0, down_key_latched = 0, set_key_latched = 0;
-unsigned int error_count_ticks = 0, trip_hold_ticks = 0, trip_display_cycle = 0, output_high_limit = 270, output_low_limit = 210, input_high_limit = 260, input_low_limit = 180, overload_level1 = 3, overload_level2 = 5, hi_lo_trip_ticks = 5, overload_trip_ticks = 120, power_on_delay_ticks = 41,earth_trip_threshold= 15;
+unsigned int error_count_ticks = 0, trip_hold_ticks = 0, trip_display_cycle = 0, output_high_limit = 270, output_low_limit = 210, input_high_limit = 260, input_low_limit = 180, hi_lo_trip_ticks = 5, overload_trip_ticks = 120, power_on_delay_ticks = 41,earth_trip_threshold= 15;
 unsigned char ir_high = 270, ir_low = 150;
 int zero_cross_wait_counter = 0, edit_value = 0;
 unsigned char display_update_ticks = 25, startup_countdown_seconds = 10, ticks_per_second = 5;
@@ -818,7 +818,7 @@ void handle_trip(char n)
             P01 = 1;
             P12 = 1;
             EA = 0;
-            while (BTN_UP == 0)
+            while (BTN_UP == 1)
             {
                 tm1637_display_text("E01");
                 P00 = 1;
@@ -834,9 +834,7 @@ void handle_trip(char n)
                 }
                 Timer2_Delay(24000000, 11, 700);
             }
-            startup_complete = 0;
-            startup_timer_ticks = 0;
-            startup_delay_active = 1;
+            start_manual_restart_delay();
             EA = 1;
             break;
 
@@ -873,7 +871,7 @@ void handle_trip(char n)
                 }
                 else
                 {
-                    while (BTN_UP == 0)
+                    while (BTN_UP == 1)
                     {
                         tm1637_display_text("OL1");
                         buzzer_on();
@@ -970,7 +968,7 @@ void handle_trip(char n)
             else
 
             {
-                while (BTN_UP == 0)
+                while (BTN_UP == 1)
                 {
                     tm1637_display_text("OL2");
                     buzzer_on();
@@ -997,7 +995,7 @@ void handle_trip(char n)
                 P12 = 1;
                tm1637_display_text("C.F");
 
-               while (BTN_UP != 1)
+               while (BTN_UP == 1)
             {
                 startup_timer_ticks = 0;
                 while (startup_timer_ticks < 100)
@@ -1010,11 +1008,8 @@ void handle_trip(char n)
                     P00 = 0;
                 }
             }
-            startup_complete = 0;
-            startup_timer_ticks = 0;
+            start_manual_restart_delay();
             output_current_rms = 0;
-            startup_delay_active = 1;
-            relay_enabled = 0;
             display_page_index = 1;
             }
             else if(trip_elapsed_ticks > 12)
@@ -1181,7 +1176,7 @@ void timer0_isr(void) interrupt 1
         set_key_hold_ticks = 0;
     }
 
-    if (set_key_hold_ticks > (ticks_per_second * 8))
+    if (set_key_hold_ticks > (ticks_per_second * 4))
     {
         display_update_ticks = 0;
         set_key_hold_ticks = 0;
@@ -1203,18 +1198,31 @@ void timer0_isr(void) interrupt 1
     {
         if (startup_complete == 0)
         {
-            startup_complete = 1;
-            startup_delay_active = 0;
-            startup_delay_profile = 0;
-            overload_recovery_seconds = 0;
-            P00 = 0;
-            // tm1637_display_text("IP");
+            if (startup_delay_profile == 0)
+            {
+                startup_complete = 1;
+                startup_delay_active = 0;
+                startup_delay_profile = 0;
+                overload_recovery_seconds = 0;
+                P00 = 0;
+                // tm1637_display_text("IP");
+            }
+            else
+            {
+                start_manual_restart_delay();
+            }
         }
 
         // printf("\n buzzer_output off flag 1 \n");
     }
     else if (startup_complete == 0)
     {
+        if (startup_delay_profile != 0 && BTN_UP == 1)
+        {
+            start_manual_restart_delay();
+            return;
+        }
+
         buzzer_on();
         if (((startup_timer_ticks / ticks_per_second) & 1) == 0)
         {
@@ -1260,8 +1268,8 @@ void apply_config_to_runtime()
     hi_lo_trip_ticks = (int)(g_config.hlt_delay * 4.44);
     regulation_band_high = g_config.regulation;
     regulation_band_low = g_config.regulation * (-1);
-    overload_level1 = g_config.overload_level1;
-    overload_level2 = g_config.overload_level1 + 3;
+    overload_level1 = (g_config.overload_level1)/10.0;
+    overload_level2 = ((g_config.overload_level1)/10.0) + 3.0;
     overload_trip_ticks = (int)(g_config.overload_trip_ticks * 4.44);
     power_on_delay_ticks = (int)(g_config.on_delay * 5);
     input_calibration = g_config.input_voltage_calibration;
@@ -1324,8 +1332,8 @@ void start_manual_restart_delay(void)
 
 void start_overload_auto_recovery(unsigned char profile)
 {
-    power_on_delay_ticks = 300U * 5U;
-    ticks_per_second = 5;
+    power_on_delay_ticks = 300U * 12U;
+    ticks_per_second = 12;
     overload_recovery_seconds = 300;
     startup_delay_profile = profile;
     startup_complete = 0;
@@ -1375,9 +1383,9 @@ void main(void)
         g_config.contactor_monitor_enabled = 0;
         g_config.regulation = 3;
         g_config.olr = 1;
-        g_config.overload_level1 = 10;
+        g_config.overload_level1 = 100.0;
         g_config.overload_trip_ticks = 10;
-        g_config.overload_level2 = 13;
+        g_config.overload_level2 = 130.0;
         g_config.input_voltage_calibration = 1.0; // 0.92
         g_config.output_voltage_calibration = 1.0; // 0.92
         g_config.current_calibration_factor = 1.0;
@@ -2287,13 +2295,13 @@ void main(void)
                     break;
 
                 case OL1_SET:
-                    tm1637_display_number((unsigned int)edit_value);
+                    tm1637_display_current((float)edit_value / 10);
                     if (is_set_key_pressed())
                     {
 
                         g_config.overload_level1 = edit_value;
-                        overload_level1 = edit_value;
-                        g_config.overload_level2 = edit_value + 3;
+                        overload_level1 = (float)edit_value/10.0;
+                        g_config.overload_level2 = edit_value + 30;
                         g_ui_state = OL1;
                     }
                     break;
@@ -2351,12 +2359,12 @@ void main(void)
                     break;
 
                 case OL2_SET:
-                    tm1637_display_number((unsigned int)edit_value);
+                    tm1637_display_current((float)edit_value / 10);
                     if (is_set_key_pressed())
                     {
 
                         g_config.overload_level2 = edit_value;
-                        overload_level2 = edit_value;
+                        overload_level2 = (float)edit_value/10.0;
                         g_ui_state = OL2;
                     }
                     break;
