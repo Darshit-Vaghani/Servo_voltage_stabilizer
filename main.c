@@ -53,9 +53,9 @@ typedef struct
     uint8_t contactor_monitor_enabled;        // bit (use 0/1)
     uint8_t regulation; // 8 bit
     uint8_t olr;        // bit
-    uint8_t overload_level1;        // 8 bit
+    uint16_t overload_level1;       // 16 bit (tenths of ampere)
     uint8_t overload_trip_ticks;        // 8 bit
-    uint8_t overload_level2;        // 8 bit
+    uint16_t overload_level2;       // 16 bit (tenths of ampere)
 	uint8_t earth_monitor_enabled;
 
     float input_voltage_calibration; // 4
@@ -376,7 +376,8 @@ bit startup_complete = 0;
 bit error_flag = 0, auto_mode_enabled = 1, startup_delay_active = 1;
 bit buzzer_output = 0;
 bit settings_page_active = 0, up_key_latched = 0, down_key_latched = 0, set_key_latched = 0;
-unsigned int error_count_ticks = 0, trip_hold_ticks = 0, trip_display_cycle = 0, output_high_limit = 270, output_low_limit = 210, input_high_limit = 260, input_low_limit = 180, overload_level1 = 3, overload_level2 = 5, hi_lo_trip_ticks = 5, overload_trip_ticks = 120, power_on_delay_ticks = 41,earth_trip_threshold= 15;
+unsigned int error_count_ticks = 0, trip_hold_ticks = 0, trip_display_cycle = 0, output_high_limit = 270, output_low_limit = 210, input_high_limit = 260, input_low_limit = 180, hi_lo_trip_ticks = 5, overload_trip_ticks = 120, power_on_delay_ticks = 41,earth_trip_threshold= 15;
+uint16_t overload_level1 = 3, overload_level2 = 5;
 unsigned char ir_high = 270, ir_low = 150;
 int zero_cross_wait_counter = 0, edit_value = 0;
 unsigned char display_update_ticks = 25, startup_countdown_seconds = 10, ticks_per_second = 5;
@@ -1598,11 +1599,11 @@ void main(void)
             handle_trip(4);
         }
         
-        else if (output_current_rms > overload_level2)
+        else if (output_current_rms > ((float)overload_level2 / 10.0f))
         {
             handle_trip(7);
         }
-        else if (output_current_rms > overload_level1)
+        else if (output_current_rms > ((float)overload_level1 / 10.0f))
         {
             handle_trip(3);
         }
@@ -2319,7 +2320,7 @@ void main(void)
                     break;
 
                 case OL1_SET:
-                    tm1637_display_number((unsigned int)edit_value);
+                    tm1637_display_current((float)edit_value / 10.0f);
                     if (is_set_key_pressed())
                     {
 
@@ -2383,7 +2384,7 @@ void main(void)
                     break;
 
                 case OL2_SET:
-                    tm1637_display_number((unsigned int)edit_value);
+                    tm1637_display_current((float)edit_value / 10.0f);
                     if (is_set_key_pressed())
                     {
 
