@@ -2008,7 +2008,7 @@ void main(void)
                     if (is_up_key_pressed())
                     {
 
-                        g_ui_state = UI_US_EXIT;
+                        g_ui_state = EARTH;
                     }
                     if (is_down_key_pressed())
                     {
@@ -2428,7 +2428,7 @@ void main(void)
                     if (is_up_key_pressed())
                     {
 
-                        g_ui_state = EARTH;
+                        g_ui_state = EARTH_HIGH;
                     }
                     if (is_down_key_pressed())
                     {
@@ -2485,12 +2485,12 @@ void main(void)
                     if (is_up_key_pressed())
                     {
 
-                        g_ui_state = UI_FS_EXIT;
+                        g_ui_state = UI_US_EXIT;
                     }
                     if (is_down_key_pressed())
                     {
 
-                        g_ui_state = CON;
+                        g_ui_state = DIS;
                     }
                     break;
                 case EARTH_ON:
@@ -2548,7 +2548,7 @@ void main(void)
                     if (is_down_key_pressed())
                     {
 
-                        g_ui_state = EARTH;
+                        g_ui_state = CON;
                     }
                     break;
 
