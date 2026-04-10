@@ -372,7 +372,7 @@ int voltage_control_error = 0;
 unsigned int up_press_counter = 0, down_press_counter = 0, menu_timeout_counter = 0, edit_value_max = 1000, edit_value_min = 0;
 float adc_voltage_accumulator = 0.0;
 bit relay_enabled = 0, error_active = 0, input_low_latched = 0, input_high_latched = 0, trip_latched_flag = 0, output_low_latched = 0, output_high_latched = 0;
-bit startup_complete = 0;
+bit startup_complete = 0,home_state=0;
 bit error_flag = 0, auto_mode_enabled = 1, startup_delay_active = 1;
 bit buzzer_output = 0;
 bit settings_page_active = 0, up_key_latched = 0, down_key_latched = 0, set_key_latched = 0;
@@ -1701,11 +1701,16 @@ void main(void)
             {
                 ++menu_timeout_counter;
 							
-							if(BTN_HOME == 1) {
-							         // g_ui_state = UI_NORMAL;
-                        //display_update_ticks = 20;
+							if(BTN_HOME == 1 && home_state == 0) {
+                                home_state = 1;
+							    g_ui_state = UI_NORMAL;
+                                save_config_to_flash();
+                                display_update_ticks = 20;
 							
 							}
+                            if(BTN_HOME == 0) {
+                                home_state = 0;
+                            }
                 switch (g_ui_state)
                 {
 
@@ -2776,6 +2781,7 @@ void main(void)
                 if (menu_timeout_counter > 130)
                 {
                     menu_timeout_counter = 0;
+                    save_config_to_flash();
                     display_update_ticks = 20;
                     g_ui_state = UI_NORMAL;
                 }
