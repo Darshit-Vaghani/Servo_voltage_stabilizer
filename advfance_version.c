@@ -15,7 +15,7 @@
 #define EEPROM_I2C_ADDR 0x50
 #define EEPROM_PAGE_SIZE 8 // AT24C02 = 8 bytes
 #define EEPROM_START_ADDR 0x00
-#define chek_status 5
+#define chek_status 3
 //=================================================
 
 
@@ -33,7 +33,7 @@ uint32_t ControlAddr;
 #define ADC_OFFSET 1.67
 #define GAIN_FACTOR 0.002222
 
-#define CURRENT_ADC_OFFSET 1.68
+#define CURRENT_ADC_OFFSET 1.65
 #define CURRENT_GAIN_FACTOR 0.01508 // 2388:1 CT + 36Ω
 
 #define SAMPLE_COUNT 369 // 738 2 cycle
@@ -51,12 +51,22 @@ uint32_t ControlAddr;
 #define HOME 242
 #define SET 224
 
+#define HI_LO_LED 227
+#define OV_LD_LED 28
+#define MAN_LED 226
+
+#define LED_ON 0U
+#define LED_OFF 1U
+#define MANUAL_LED_BLINK_MS 1000U
+
+
 int target = 230, v_in, v_o;
 float c;
 int error = 0;
+int current_temp=0;
 char d1 = 0, d2 = 0, d3 = 0, d4 = 0;
 bool onoff_temp = 0, buzer_state = 0, start_flag = 0, relay_flag = 0,
-     v_in_high = 0, v_in_low = 0, op_high = 0, op_low = 0;
+     v_in_high = 0, v_in_low = 0, op_high = 0, op_low = 0,contactor_state=0;
 uint64_t time = 0;
 unsigned int buzer_count = 0, temp_count = 0,max=1000,min=0;
 uint8_t display_error = 0,total_logs=0;
@@ -114,14 +124,41 @@ UI_state display_state = DEF;
 
 //---------------------Parameter Range define---------------------------------------
 
-#define INPUT_HIGH 290
-#define INPUT_LOW  190
-#define TARGET_VOLTAGE_MAX 270
-#define OVERLOAD_MAX 40
-#define OVERLOAD_MIN 1
-#define HIGH_LOW_TIME_MAX 20
-#define REGULATION_MAX 7
-#define REGULATION_MIN 2
+#define MAX_TARGET_VOLTAGE 250
+#define MIN_TARGET_VOLTAGE 210
+#define DEFAULT_TARGET_VOLTAGE 240
+
+#define MAX_ON_DELAY 60
+#define MIN_ON_DELAY 3
+#define DEFAULT_ON_DELAY 10
+
+#define MAX_INPUT_LOW 40 // setvoltage-40
+#define MIN_INPUT_LOW 130
+#define DEFAULT_INPUT_LOW 150
+
+#define MAX_INPUT_HIGH 300
+#define MIN_INPUT_HIGH 30 // setvoltage+30
+#define DEFAULT_INPUT_HIGH 290
+
+#define MAX_OUTPUT_HIGH 280
+#define MIN_OUTPUT_HIGH 30 // setvoltage + 30
+#define DEFAULT_OUTPUT_HIGH 270
+
+#define MAX_OUTPUT_LOW 30 // setvoltage - 30
+#define MIN_OUTPUT_LOW 130
+#define DEFAULT_OUTPUT_LOW 200
+
+#define MAX_OL1 1000
+#define MIN_OL1 20
+#define DEFAULT_OL1 10 // current set in decimal point not in integer form ***
+
+#define MAX_OL1_TIME 150
+#define MIN_OL1_TIME 10 // default time is 90 sec
+#define DEFAULT_OL1_TIME 90
+
+#define MAX_REG 10
+#define MIN_REG 2
+#define DEFAULT_REG 3
 
 
 //-----------------------------------------------------------------------------------
@@ -162,8 +199,10 @@ typedef struct {
   uint8_t regulation_voltage;
   bool op_current;
   uint8_t overload_current;
+  uint8_t upper_overload;
   int ovld_time_s;
   uint8_t ovld_imd_current;
+  uint8_t upper_imd_current;
   bool ovld_reset_onoff;
   bool earth_fail_onoff;
   bool contactor_fail_onoff;
@@ -195,9 +234,11 @@ void load_default_parameters(parameters *p) {
   p->Mode = 1;
   p->regulation_voltage = 3;
   p->op_current = 1;
-  p->overload_current = 10;
+  p->overload_current = 100;
+  p->upper_overload = 0;
   p->ovld_time_s = 120;
-  p->ovld_imd_current = 15;
+  p->ovld_imd_current = 150;
+  p->upper_imd_current = 0;
   p->ovld_reset_onoff = true;
   p->earth_fail_onoff = 0;
   p->contactor_fail_onoff = true;
@@ -447,6 +488,13 @@ int waitForZeroCross(uint8_t pin) {
   return 1; // Zero-cross detected
 }
 
+void on_after_high_low() {
+        time = 0;
+        start_flag = 0;
+        display_state = DEF;
+        contactor_state = 0;
+        buzer_state = 1;
+}
 //----------------------------------------------------------------------------------------------------
 
 //----------------------------------------AC Voltage
@@ -480,7 +528,7 @@ float ac_voltage_rms(uint16_t ADC_NO) {
 float ac_current_rms(void) {
   float sum_squares = 0.0;
 
-  // waitForZeroCross(C_ZC);
+  waitForZeroCross(C_ZC);
   int i = 0;
   for (i = 0; i < SAMPLE_COUNT; i++) {
     uint16_t adc_val = readADCA0_oversampled(ADC_SOC_NUMBER1);
@@ -629,6 +677,25 @@ void main(void) {
   
   GPIO_setPadConfig(C_ZC, GPIO_PIN_TYPE_STD);
   GPIO_setDirectionMode(C_ZC, GPIO_DIR_MODE_IN);
+
+  GPIO_setPadConfig(HI_LO_LED, GPIO_PIN_TYPE_STD);
+  GPIO_setPinConfig(GPIO_227_GPIO227);
+  GPIO_setAnalogMode(227, GPIO_ANALOG_DISABLED);
+  GPIO_setDirectionMode(227,GPIO_DIR_MODE_OUT);
+  GPIO_writePin(HI_LO_LED, LED_OFF);
+
+  GPIO_setPadConfig(MAN_LED, GPIO_PIN_TYPE_STD);
+  GPIO_setPinConfig(GPIO_226_GPIO226);
+  GPIO_setAnalogMode(226, GPIO_ANALOG_DISABLED);
+  GPIO_setDirectionMode(226,GPIO_DIR_MODE_OUT);
+  GPIO_writePin(MAN_LED, LED_OFF);
+ 
+  GPIO_setPadConfig(OV_LD_LED, GPIO_PIN_TYPE_STD);
+   GPIO_setPinConfig(GPIO_28_GPIO28);
+  GPIO_setAnalogMode(28, GPIO_ANALOG_DISABLED);
+  GPIO_setDirectionMode(28,GPIO_DIR_MODE_OUT);
+  GPIO_writePin(OV_LD_LED, LED_OFF);
+ 
   buzer_state = 1;
 
   // Initializes PIE and clears PIE registers. Disables CPU interrupts.
@@ -790,6 +857,34 @@ void buzer_off() {
   buzer_state = 0;
   GPIO_writePin(buzzer, 0);
 }
+
+void update_leds(bool hi_lo_fault, bool overload_fault, bool manual_mode) {
+  static TickType_t manual_blink_tick = 0;
+  static bool manual_led_state = false;
+  TickType_t now = xTaskGetTickCount();
+  TickType_t blink_period = pdMS_TO_TICKS(MANUAL_LED_BLINK_MS);
+
+  GPIO_writePin(HI_LO_LED, hi_lo_fault ? LED_ON : LED_OFF);
+  GPIO_writePin(OV_LD_LED, overload_fault ? LED_ON : LED_OFF);
+
+  if (manual_mode) {
+    if (manual_blink_tick == 0) {
+      manual_blink_tick = now;
+      manual_led_state = false;
+    }
+
+    while ((now - manual_blink_tick) >= blink_period) {
+      manual_blink_tick += blink_period;
+      manual_led_state = !manual_led_state;
+    }
+
+    GPIO_writePin(MAN_LED, manual_led_state ? LED_ON : LED_OFF);
+  } else {
+    manual_blink_tick = now;
+    manual_led_state = false;
+    GPIO_writePin(MAN_LED, LED_OFF);
+  }
+}
 //------------------------------------------------------------------------------------------------------
 
 //--------------store function-----------------------------------------------
@@ -811,11 +906,14 @@ void edit_data_store(int new_interger_data, float new_floater_data) {
     break;
 
   case OVERLOAD:
-    store_data.overload_current = new_interger_data;
+    store_data.overload_current = new_interger_data & 0xFF;
+    store_data.upper_overload = (new_interger_data >> 8) & 0xFF;
+    //recombine a =  lower | (upper << 8);
     break;
 
   case OVLD_TIME:
-    store_data.ovld_time_s = new_interger_data;
+    store_data.ovld_time_s = new_interger_data & 0xFF;
+    store_data.upper_imd_current = (new_interger_data >> 8) & 0xFF;
     break;
 
   case OVLD_IMD:
@@ -917,7 +1015,7 @@ void edit_data_store(int new_interger_data, float new_floater_data) {
 
   case OA_CALIBRATION:
     store_data.current_calibration =
-        (uint8_t)(((float)new_interger_data * store_data.current_calibration / c));
+        (uint8_t)(((float)(new_interger_data/10.0) * store_data.current_calibration / c));
     break;
 
   default:
@@ -945,7 +1043,7 @@ void UI_Task(void *pvParameters) {
   int earth_vol, t_start = 5, f, parameter_pre_temp = 4, hlt_timer = 0,
                  contactor_vol = 0, motor_c = 0,log_temp=0,log_couter=0;
   uint8_t edit_count = 0,contactor_voltage_count=0;
-  bool edit_screen = 0, blink_flag = 0,contactor_state=0,ovl_flag=0;
+  bool edit_screen = 0, blink_flag = 0,ovl_flag=0;
 
   for (;;) {
 
@@ -970,7 +1068,7 @@ void UI_Task(void *pvParameters) {
     required_parameter.oa_cal = store_data.current_calibration;
     xSemaphoreGive(parameter_mutex);
 
-    if (c < 0.95) {
+    if (c < 0.7) {
       c = 0;
     }
 
@@ -1164,7 +1262,7 @@ void UI_Task(void *pvParameters) {
         pre_state = display_state;
         set_number(store_data.regulation_voltage);
         edit_count = 3;
-        set_min_max(REGULATION_MIN,REGULATION_MAX);
+        set_min_max(MIN_REG,MAX_REG);
         display_state = EDIT;
       }
       break;
@@ -1190,7 +1288,10 @@ void UI_Task(void *pvParameters) {
 
     case OVERLOAD:
       lcd_printf("OVERLOAD:");
-      lcd_printf("%4d", store_data.overload_current);
+     current_temp = (store_data.overload_current + 
+          (store_data.upper_overload << 8));
+      //lcd_printf("%4d", (store_data.ovld_imd_current + (store_data.upper_imd_current <<8 )));
+      lcd_printf("%d.%d",current_temp / 10, current_temp % 10);
       lcd_setCursor(0, 1);
       lcd_printf("<-- EDIT:P03 -->");
       if (GPIO_readPin(UP) == 1 && up_flag == 0) {
@@ -1203,7 +1304,7 @@ void UI_Task(void *pvParameters) {
         edit_screen = 1;
         pre_state = display_state;
         set_number(store_data.overload_current);
-        set_min_max(OVERLOAD_MIN,OVERLOAD_MAX);
+        set_min_max(MIN_OL1,MAX_OL1);
         display_state = EDIT;
       }
       break;
@@ -1223,14 +1324,18 @@ void UI_Task(void *pvParameters) {
         edit_screen = 1;
         pre_state = display_state;
         set_number(store_data.ovld_time_s);
-        set_min_max(1,200);
+        set_min_max(MIN_OL1_TIME,MAX_OL1_TIME);
         display_state = EDIT;
       }
       break;
 
     case OVLD_IMD:
       lcd_printf("OVLD IMD:");
-      lcd_printf("%4d", store_data.ovld_imd_current);
+      current_temp = (store_data.ovld_imd_current + 
+          (store_data.upper_imd_current << 8));
+      //lcd_printf("%4d", (store_data.ovld_imd_current + (store_data.upper_imd_current <<8 )));
+      lcd_printf("%d.%d",current_temp / 10, current_temp % 10);
+     // lcd_printf("%4d", store_data.ovld_imd_current);
       lcd_setCursor(0, 1);
       lcd_printf("<-- EDIT:P05 -->");
       if (GPIO_readPin(UP) == 1 && up_flag == 0) {
@@ -1243,7 +1348,7 @@ void UI_Task(void *pvParameters) {
         edit_screen = 1;
         pre_state = display_state;
         set_number(store_data.ovld_imd_current);
-        set_min_max(OVERLOAD_MIN,OVERLOAD_MAX);
+        set_min_max(50,2000);
         display_state = EDIT;
       }
       break;
@@ -1319,7 +1424,7 @@ void UI_Task(void *pvParameters) {
         edit_screen = 1;
         pre_state = display_state;
         set_number(store_data.earth_high_voltage);
-        set_min_max(0,1000);
+        set_min_max(5,50);
         display_state = EDIT;
       }
       break;
@@ -1403,7 +1508,7 @@ void UI_Task(void *pvParameters) {
         pre_state = display_state;
         set_number(store_data.target_output_voltage +
                    store_data.upper_target_voltage);
-          set_min_max(INPUT_LOW,TARGET_VOLTAGE_MAX);
+          set_min_max(MIN_TARGET_VOLTAGE,MAX_TARGET_VOLTAGE);
         display_state = EDIT;
       }
       break;
@@ -1423,7 +1528,7 @@ void UI_Task(void *pvParameters) {
         edit_screen = 1;
         pre_state = display_state;
         set_number(store_data.ondelay_s);
-        set_min_max(1,200);
+        set_min_max(MIN_ON_DELAY,MAX_ON_DELAY);
         display_state = EDIT;
       }
       break;
@@ -1444,7 +1549,7 @@ void UI_Task(void *pvParameters) {
         edit_screen = 1;
         pre_state = display_state;
         set_number(store_data.ip_low_voltage + store_data.upper_ip_low_voltage);
-        set_min_max(INPUT_LOW,INPUT_HIGH);
+        set_min_max(MIN_INPUT_LOW,(store_data.target_output_voltage + store_data.upper_target_voltage)-MAX_INPUT_LOW);
         display_state = EDIT;
       }
       break;
@@ -1466,7 +1571,7 @@ void UI_Task(void *pvParameters) {
         pre_state = display_state;
         set_number(store_data.ip_high_voltage +
                    store_data.upper_ip_high_voltage);
-                   set_min_max(INPUT_LOW,INPUT_HIGH);
+                   set_min_max(MIN_INPUT_HIGH + (store_data.target_output_voltage + store_data.upper_target_voltage),MAX_INPUT_HIGH);
         display_state = EDIT;
       }
       break;
@@ -1487,7 +1592,7 @@ void UI_Task(void *pvParameters) {
         edit_screen = 1;
         pre_state = display_state;
         set_number(store_data.op_low_voltage + store_data.upper_op_low_voltage);
-        set_min_max(SET_VOLTAGE-60,SET_VOLTAGE+60);
+        set_min_max(MIN_OUTPUT_LOW,(store_data.target_output_voltage + store_data.upper_target_voltage)-MAX_OUTPUT_LOW);
         display_state = EDIT;
       }
       break;
@@ -1509,7 +1614,7 @@ void UI_Task(void *pvParameters) {
         pre_state = display_state;
         set_number(store_data.op_high_voltage +
                    store_data.upper_op_high_voltage);
-                   set_min_max(SET_VOLTAGE-60,SET_VOLTAGE+60);
+                   set_min_max(MIN_OUTPUT_HIGH + (store_data.target_output_voltage + store_data.upper_target_voltage),MAX_OUTPUT_HIGH );
         display_state = EDIT;
       }
       break;
@@ -1529,7 +1634,7 @@ void UI_Task(void *pvParameters) {
         edit_screen = 1;
         pre_state = display_state;
         set_number(store_data.hi_lo_time_s);
-        set_min_max(1,HIGH_LOW_TIME_MAX);
+        set_min_max(10,20);
         display_state = EDIT;
       }
       break;
@@ -1586,14 +1691,21 @@ void UI_Task(void *pvParameters) {
         edit_screen = 1;
         pre_state = display_state;
         set_number((int)c);
-        set_min_max(1,300);
+        set_min_max(1,2000);
         display_state = EDIT;
       }
       break;
 
     case EDIT:
       lcd_setCursor(0, 1);
-      lcd_printf("EDIT:     %4d", temp_count);
+      
+      if(pre_state == OVERLOAD || pre_state == OVLD_IMD || pre_state == OA_CALIBRATION) {
+      lcd_printf("EDIT:     %d.%d", (int)(temp_count/10),temp_count % 10 );
+      }
+     else {
+     lcd_printf("EDIT:     %4d", temp_count);
+     }
+     
 
       if (GPIO_readPin(SET) == 1 && set_flag == 0) {
 
@@ -1657,7 +1769,7 @@ void UI_Task(void *pvParameters) {
       if (up_counter > 49 && temp_count < max) {
         ++temp_count;
         up_delay_counter = 0;
-      } else if (up_delay_counter > 3 &&temp_count < max) {
+      } else if (up_delay_counter > 2 &&temp_count < max) {
         ++temp_count;
         up_delay_counter = 0;
       }
@@ -1822,8 +1934,8 @@ void UI_Task(void *pvParameters) {
         buzer_state = 1;
       }
     }
-
-else if (c > store_data.ovld_imd_current && ovl_flag == 0 && start_flag==1) {
+//lower | (upper << 8);    ((store_data.overload_current | (store_data.upper_overload <<8 ))/10)
+else if (c >  ((store_data.ovld_imd_current + (store_data.upper_imd_current <<8 ))/10.0) && ovl_flag == 0 && start_flag==1) {
 
       relay_flag = 0;
       logs[total_logs] = 6;
@@ -1834,7 +1946,7 @@ else if (c > store_data.ovld_imd_current && ovl_flag == 0 && start_flag==1) {
         time = 0;
     }
     
-    else if (c > store_data.overload_current && ovl_flag == 0 && start_flag==1) {
+    else if (c > (((store_data.overload_current + (store_data.upper_overload <<8 ))/10.0)) && ovl_flag == 0 && start_flag==1) {
       display_error = 5;
       ++hlt_timer;
       if (hlt_timer > (store_data.ovld_time_s * 5)) {
@@ -1869,26 +1981,30 @@ else if (c > store_data.ovld_imd_current && ovl_flag == 0 && start_flag==1) {
       if (v_in_high && v_in < ((store_data.ip_high_voltage +
                                 store_data.upper_ip_high_voltage) -
                                15)) {
-        relay_flag = 1;
+        //relay_flag = 1;
         v_in_high = 0;
+        on_after_high_low();
       }
       if (v_in_low && v_in > ((store_data.ip_low_voltage +
                                store_data.upper_ip_low_voltage) +
                               15)) {
-        relay_flag = 1;
+        //relay_flag = 1;
         v_in_low = 0;
+        on_after_high_low();
       }
       if (op_high && v_o < ((store_data.op_high_voltage +
                              store_data.upper_op_high_voltage) -
                             15)) {
-        relay_flag = 1;
+        //relay_flag = 1;
         op_high = 0;
+        on_after_high_low();
       }
       if (op_low &&
           v_o > ((store_data.op_low_voltage + store_data.upper_op_low_voltage) +
                  15)) {
-        relay_flag = 1;
+        //relay_flag = 1;
         op_low = 0;
+        on_after_high_low();
       }
     }
     //--------------------------------------------------------
@@ -1984,6 +2100,14 @@ else if (c > store_data.ovld_imd_current && ovl_flag == 0 && start_flag==1) {
         ovl_flag = 0;
         buzer_state = 1;
     }
+
+    update_leds(v_in_high || v_in_low || op_high || op_low,
+          ovl_flag ||
+            ((c > ((store_data.ovld_imd_current + (store_data.upper_imd_current << 8)) / 10.0f)) &&
+             start_flag == 1) ||
+            ((c > ((store_data.overload_current + (store_data.upper_overload << 8)) / 10.0f)) &&
+             start_flag == 1),
+          store_data.Mode == 0);
 
     ++time;
     //--------------------------------------------------------------------
