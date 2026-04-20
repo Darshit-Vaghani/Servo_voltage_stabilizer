@@ -846,7 +846,7 @@ void handle_trip(char n)
 						set_status_led(LED_HILO, 1);
 						SHOW_TRIP_ALT(input_voltage, "IPH");
 					}
-            if (trip_elapsed_ticks > hi_lo_trip_ticks)
+            if (trip_elapsed_ticks > hi_lo_trip_ticks && input_high_latched==0)
             { // 40 9sec
                 input_high_latched = 1;
                 relay_enabled = 0;
@@ -898,7 +898,7 @@ void handle_trip(char n)
 						 set_status_led(LED_HILO, 1);
 						 SHOW_TRIP_ALT(input_voltage, "IPL");
 					}
-            if (trip_elapsed_ticks > hi_lo_trip_ticks)
+            if (trip_elapsed_ticks > hi_lo_trip_ticks && input_low_latched == 0)
             { // 40 9sec
                 input_low_latched = 1;
                 relay_enabled = 0;
@@ -920,7 +920,7 @@ void handle_trip(char n)
 				SHOW_TRIP_ALT(output_voltage, "OPL");
 				}
 				    
-            if (trip_elapsed_ticks > hi_lo_trip_ticks)
+            if (trip_elapsed_ticks > hi_lo_trip_ticks && output_low_latched==0)
             { // 40 9sec
                 P00 = 0;
                 output_low_latched = 1;
@@ -939,7 +939,7 @@ void handle_trip(char n)
 						 set_status_led(LED_HILO, 1);
 						SHOW_TRIP_ALT(output_voltage, "OPH");
 					}
-            if (trip_elapsed_ticks > hi_lo_trip_ticks)
+            if (trip_elapsed_ticks > hi_lo_trip_ticks && output_high_latched==0)
             { // 40 9sec
                 P00 = 0;
                 output_high_latched = 1;
@@ -1556,22 +1556,22 @@ void main(void)
 
         //------------------------------------
 
-        if (output_voltage > output_high_limit && output_high_latched == 0)
+        if (output_voltage > output_high_limit)
         {
             error_active = 1;
             handle_trip(6);
         }
-        else if (output_voltage < output_low_limit && output_low_latched == 0)
+        else if (output_voltage < output_low_limit)
         {
             error_active = 1;
             handle_trip(5);
         }
-        else if (input_voltage > input_high_limit && input_high_latched == 0)
+        else if (input_voltage > input_high_limit)
         {
             error_active = 1;
             handle_trip(2);
         }
-        else if (input_voltage < input_low_limit && input_low_latched == 0)
+        else if (input_voltage < input_low_limit)
         {
             error_active = 1;
             handle_trip(4);
