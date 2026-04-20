@@ -364,7 +364,7 @@ unsigned char TM1637_CharToSeg(char c)
 uint16_t adc_data_ain;
 
 int output_voltage = 0, output_voltage_raw = 0;
-float output_current_rms = 0,overload_level1 = 10.0, overload_level2 = 13.0;
+float output_current_rms = 0,overload_level1 = 10.0, overload_level2 = 13.0,current_state=0.0;
 int input_voltage = 0, input_voltage_raw = 0;
 int contactor_voltage = 0,earth_voltage=0;
 float output_calibration = 0.92, input_calibration = 0.92, current_calibration = 1;
@@ -388,6 +388,7 @@ volatile char regulation_band_high = 3, regulation_band_low = -3, input_voltage_
 volatile unsigned char manual_led_tick = 0;
 volatile unsigned char startup_delay_profile = 0;
 volatile unsigned int overload_recovery_seconds = 0;
+volatile unsigned int overload_trip_current_display = 0;
 unsigned char display_page_index = 0, display_page_start = 0, display_page_end = 2, voltage_scan_step = 1;
 unsigned char status_led_bitmap = 0;
 
@@ -792,13 +793,13 @@ void handle_trip(char n)
         ++trip_elapsed_ticks;
 
         /* Reuse common alternating voltage_control_error/tag display pattern to save code size. */
-        #define SHOW_TRIP_ALT(err_code, tag_code)                    \
+        #define SHOW_TRIP_ALT(VAL, tag_code)                    \
             do                                                       \
             {                                                        \
                 ++trip_display_cycle;                                 \
                 if (trip_display_cycle < 6)                           \
-                {                                                    \
-                    tm1637_display_text(err_code);                  \
+                {                                                     \
+                    tm1637_display_number(VAL);                      \
                 }                                                    \
                 else if (trip_display_cycle < 12)                     \
                 {                                                    \
@@ -820,7 +821,7 @@ void handle_trip(char n)
             EA = 0;
             while (BTN_UP == 1)
             {
-                tm1637_display_text("E01");
+                tm1637_display_text(1);
                 P00 = 1;
                 Timer2_Delay(24000000, 13, 500);
                 P00 = 0;
@@ -843,7 +844,7 @@ void handle_trip(char n)
            
 					if(trip_elapsed_ticks > 5) {
 						set_status_led(LED_HILO, 1);
-						SHOW_TRIP_ALT("E02", "IPH");
+						SHOW_TRIP_ALT(input_voltage, "IPH");
 					}
             if (trip_elapsed_ticks > hi_lo_trip_ticks)
             { // 40 9sec
@@ -861,6 +862,7 @@ void handle_trip(char n)
             set_status_led(LED_OVL, 1);
             if (trip_elapsed_ticks > overload_trip_ticks)
             {
+                overload_trip_current_display = (unsigned int)(output_current_rms + 0.5f);
                 if (g_config.olr == 1)
                 {
                     start_overload_auto_recovery(1);
@@ -894,7 +896,7 @@ void handle_trip(char n)
            
 					if(trip_elapsed_ticks > 5) {
 						 set_status_led(LED_HILO, 1);
-						 SHOW_TRIP_ALT("E03", "IPL");
+						 SHOW_TRIP_ALT(input_voltage, "IPL");
 					}
             if (trip_elapsed_ticks > hi_lo_trip_ticks)
             { // 40 9sec
@@ -915,7 +917,7 @@ void handle_trip(char n)
 				
 				if(trip_elapsed_ticks > 5) {
 					 set_status_led(LED_HILO, 1);
-				SHOW_TRIP_ALT("E04", "OPL");
+				SHOW_TRIP_ALT(output_voltage, "OPL");
 				}
 				    
             if (trip_elapsed_ticks > hi_lo_trip_ticks)
@@ -935,7 +937,7 @@ void handle_trip(char n)
            
 					if(trip_elapsed_ticks > 5) {
 						 set_status_led(LED_HILO, 1);
-						SHOW_TRIP_ALT("E05", "OPH");
+						SHOW_TRIP_ALT(output_voltage, "OPH");
 					}
             if (trip_elapsed_ticks > hi_lo_trip_ticks)
             { // 40 9sec
@@ -958,6 +960,7 @@ void handle_trip(char n)
             P12 = 1;
             // EA = 0;
             set_status_led(LED_OVL, 1);
+            overload_trip_current_display = (unsigned int)(output_current_rms + 0.5f);
             if (g_config.olr == 1)
             {
                 start_overload_auto_recovery(2);
@@ -989,7 +992,7 @@ void handle_trip(char n)
             if (trip_elapsed_ticks > 28)
             { // 40 9sec
                 P17 = 0;
-							set_status_led(LED_OUT,0);
+							//set_status_led(LED_OUT,0);
                 P00 = 0;
                 P01 = 1;
                 P12 = 1;
@@ -1247,7 +1250,7 @@ void timer0_isr(void) interrupt 1
             }
             else
             {
-                tm1637_display_number(overload_recovery_seconds - (startup_timer_ticks / ticks_per_second));
+                tm1637_display_number(overload_trip_current_display);
             }
         }
         //(startup_countdown_seconds - (startup_timer_ticks/13))
@@ -1653,7 +1656,7 @@ void main(void)
         }
 
         P17 = relay_enabled;
-        set_status_led(LED_OUT, relay_enabled);
+        //set_status_led(LED_OUT, relay_enabled);
 
         if (display_refresh_pending && startup_delay_active == 0)
         {
