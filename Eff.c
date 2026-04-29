@@ -15,7 +15,7 @@
 #define EEPROM_I2C_ADDR 0x50
 #define EEPROM_PAGE_SIZE 8 // AT24C02 = 8 bytes
 #define EEPROM_START_ADDR 0x00
-#define chek_status 3
+#define chek_status 5
 //=================================================
 
 
@@ -34,7 +34,7 @@ uint32_t ControlAddr;
 #define GAIN_FACTOR 0.002222
 
 #define CURRENT_ADC_OFFSET 1.65
-#define CURRENT_GAIN_FACTOR 0.01508 // 2388:1 CT + 36Ω
+#define CURRENT_GAIN_FACTOR 0.01508 // 0.01508// 2388:1 CT + 36Ω  //for 33 ohm 0.01381
 
 #define SAMPLE_COUNT 369 // 738 2 cycle
 #define OSR 7
@@ -46,10 +46,10 @@ uint32_t ControlAddr;
 #define C_ZC 7
 #define ZC_TIMEOUT 10000 // adjust based on CPU speed
 
-#define UP 12  //as UP
-#define DOWN 230 // as DOWN
-#define HOME 242 // as enter
-#define SET 224 // as mode or menu
+#define UP 12
+#define DOWN 230
+#define HOME 242
+#define SET 224
 
 #define HI_LO_LED 227
 #define OV_LD_LED 28
@@ -61,7 +61,7 @@ uint32_t ControlAddr;
 
 
 int target = 230, v_in, v_o;
-float c;
+float c,in_cur_ui;
 int error = 0;
 int current_temp=0;
 char d1 = 0, d2 = 0, d3 = 0, d4 = 0;
@@ -116,7 +116,10 @@ typedef enum {
   DEF,
   SHOW_LOGS,
   HOME_UI,
-  EXIT
+  EXIT,
+  TEMP_ONOFF,
+  TEMP_RESISTANCE,
+  TEST_PARAMETER
 } UI_state;
 
 UI_state pre_state = NORMAL;
@@ -177,6 +180,10 @@ typedef struct {
   int motor_current;
   int earth_voltage;
   int contactor_v;
+  int in_power;
+  int out_power;
+  int temp_r2_resistance;
+  float input_current;
 } StabilizerData_t;
 
 typedef struct {
@@ -229,6 +236,8 @@ typedef struct {
   uint8_t output_calibration;
   uint8_t current_calibration;
   uint8_t confirmation;
+  bool temp_onoff;
+  uint8_t temp_r2_limit;
 } parameters;
 
 parameters store_data;
@@ -257,7 +266,7 @@ void load_default_parameters(parameters *p) {
   p->op_low_voltage = 200;
   p->hi_lo_time_s = 5;
   p->input_calibration = 100;
-  p->output_calibration = 104;
+  p->output_calibration = 100;
   p->current_calibration = 100;
   p->confirmation = chek_status;
   p->upper_ip_high_voltage = 30;
@@ -265,6 +274,8 @@ void load_default_parameters(parameters *p) {
   p->upper_ip_low_voltage = 0;
   p->upper_op_low_voltage = 0;
   p->upper_target_voltage = 0;
+  p->temp_onoff=0;
+  p->temp_r2_limit = 0;
 }
 uint16_t i;
 // ================= EEPROM SAVE =================
@@ -429,15 +440,17 @@ void initADCA0(void) {
   // ADC_setupSOC(ADCA_BASE, ADC_SOC_NUMBER7, ADC_TRIGGER_SW_ONLY,
   // ADC_CH_ADCIN7, 80);
   ADC_setupSOC(ADCA_BASE, ADC_SOC_NUMBER1, ADC_TRIGGER_SW_ONLY, ADC_CH_ADCIN11,
-               80);//80
-  ADC_setupSOC(ADCA_BASE, ADC_SOC_NUMBER4, ADC_TRIGGER_SW_ONLY, ADC_CH_ADCIN7,
+               80);
+  ADC_setupSOC(ADCA_BASE, ADC_SOC_NUMBER2, ADC_TRIGGER_SW_ONLY, ADC_CH_ADCIN4,
                15);
   ADC_setupSOC(ADCA_BASE, ADC_SOC_NUMBER3, ADC_TRIGGER_SW_ONLY, ADC_CH_ADCIN0,
                15);
-  ADC_setupSOC(ADCA_BASE, ADC_SOC_NUMBER2, ADC_TRIGGER_SW_ONLY, ADC_CH_ADCIN4,
+  ADC_setupSOC(ADCA_BASE, ADC_SOC_NUMBER4, ADC_TRIGGER_SW_ONLY, ADC_CH_ADCIN7,
                15);
   ADC_setupSOC(ADCA_BASE, ADC_SOC_NUMBER5, ADC_TRIGGER_SW_ONLY, ADC_CH_ADCIN5,
-               80);//80
+               80);
+               ADC_setupSOC(ADCA_BASE, ADC_SOC_NUMBER6, ADC_TRIGGER_SW_ONLY, ADC_CH_ADCIN12,
+               80);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -466,22 +479,6 @@ uint16_t readADCA0_oversampled(uint16_t ADC_NUMBER) {
 
   return (uint16_t)(sum / OSR);
 }
-
-//----------------------adc over sample for power-----------------------------
-
-uint16_t readADCA0_oversampled_for_power(uint16_t ADC_NUMBER) {
-  uint32_t sum = 0;
-  int i;
-  for (i = 0; i < 3; i++) {
-
-    sum += readADC(ADC_NUMBER);
-    ADC_clearInterruptStatus(ADCA_BASE, ADC_INT_NUMBER1);
-  }
-
-  return (uint16_t)(sum /3);
-}
-
-//----------------------------------------------------
 
 //--------------------------------------------------------------------------------------------------------
 
@@ -564,7 +561,7 @@ float ac_current_rms(void) {
 
 //---------------------------MOTOR
 // Current-----------------------------------------------------------
-float ac_current_motor(void) {
+float ac_input_current(void) {
   float sum_squares = 0.0;
 
   // waitForZeroCross(C_ZC);
@@ -573,7 +570,7 @@ float ac_current_motor(void) {
     uint16_t adc_val = readADCA0_oversampled(ADC_SOC_NUMBER5);
     float v_adc = (adc_val * ADC_REF_VOLT) / ADC_MAX;
     float current_signal = v_adc - CURRENT_ADC_OFFSET;
-    float actual_current = current_signal / 0.0225;
+    float actual_current = current_signal / CURRENT_GAIN_FACTOR;
 
     sum_squares += actual_current * actual_current;
   }
@@ -581,52 +578,22 @@ float ac_current_motor(void) {
   return sqrt(sum_squares / SAMPLE_COUNT);
 }
 
-//---------------------power factor----------
-
-float calculate_real_power(void) {
-    float power_sum = 0.0;
-
-    waitForZeroCross(V_ZC); // sync with voltage
-    int i;
-    for (i = 0; i < 860; i++) {
-
-        // Read voltage
-        uint16_t v_adc = readADCA0_oversampled_for_power(ADC_SOC_NUMBER0);
-        float v = ((float)v_adc * ADC_REF_VOLT) / ADC_MAX;
-        v -= ADC_OFFSET;
-        v /= GAIN_FACTOR;
-
-        // Read current
-        uint16_t c_adc = readADCA0_oversampled_for_power(ADC_SOC_NUMBER1);
-        float i_val = (c_adc * ADC_REF_VOLT) / ADC_MAX;
-        i_val -= CURRENT_ADC_OFFSET;
-        i_val /= CURRENT_GAIN_FACTOR;
-
-        power_sum += (v * i_val);
-    }
-
-    return power_sum /860;
-}
-
-//-----------------------------------
-
-//---------------------power factor----------
 
 float calculate_in_real_power(void) {
     float power_sum = 0.0;
 
     waitForZeroCross(V_ZC); // sync with voltage
     int i;
-    for (i = 0; i < 860; i++) {
+    for (i = 0; i < 1291; i++) {
 
         // Read voltage
-        uint16_t v_adc = readADCA0_oversampled_for_power(ADC_SOC_NUMBER2);
+        uint16_t v_adc = readADC(ADC_SOC_NUMBER2);
         float v = ((float)v_adc * ADC_REF_VOLT) / ADC_MAX;
         v -= ADC_OFFSET;
         v /= GAIN_FACTOR;
 
         // Read current
-        uint16_t c_adc = readADCA0_oversampled_for_power(ADC_SOC_NUMBER5);
+        uint16_t c_adc = readADC(ADC_SOC_NUMBER5);
         float i_val = (c_adc * ADC_REF_VOLT) / ADC_MAX;
         i_val -= CURRENT_ADC_OFFSET;
         i_val /= CURRENT_GAIN_FACTOR;
@@ -634,10 +601,33 @@ float calculate_in_real_power(void) {
         power_sum += (v * i_val);
     }
 
-    return power_sum /860;
+    return power_sum /1291;
 }
 
-//-----------------------------------
+float calculate_real_power(void) {
+    float power_sum = 0.0;
+
+    waitForZeroCross(V_ZC); // sync with voltage
+    int i;
+    for (i = 0; i < 1291; i++) {
+
+        // Read voltage
+        uint16_t v_adc = readADC(ADC_SOC_NUMBER0);
+        float v = ((float)v_adc * ADC_REF_VOLT) / ADC_MAX;
+        v -= ADC_OFFSET;
+        v /= GAIN_FACTOR;
+
+        // Read current
+        uint16_t c_adc = readADC(ADC_SOC_NUMBER1);
+        float i_val = (c_adc * ADC_REF_VOLT) / ADC_MAX;
+        i_val -= CURRENT_ADC_OFFSET;
+        i_val /= CURRENT_GAIN_FACTOR;
+
+        power_sum += (v * i_val);
+    }
+
+    return power_sum /1291;
+}
 
 //----------------------------------------------------------------------------------------------
 
@@ -801,15 +791,21 @@ int calculate_num(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
   return (a * 1000) + (b * 100) + (c * 10) + d;
 }
 
+int temp_resistance() {
+
+  float v = ((float)readADC(ADC_SOC_NUMBER6) * ADC_REF_VOLT) / ADC_MAX;
+  return (int)(v*10000/(3.3-v));
+}
+
 void set_number(int raw) { temp_count = raw; }
 
 //----------------------------------------ControllTask----------------------------------------------------------
 //beta
 void Control_Task(void *pvParameters) {
-  uint8_t output_regulation = 3, flag = 0, ip_c = 100, op_c = 100, oa_c = 100;
+  uint8_t output_regulation = 3, flag = 0, ip_c = 100, op_c = 100, oa_c = 100,input_power=0,output_power=0,temp_r2=0;
   bool mode_auto_onoff = 1,error_flag=0;
   int v_input = 0, contactor_voltage = 0, v_earth = 0, v_out = 0, motor_cur = 0;
-  float cur,power,power_in,Efff=0;
+  float cur,in_cur;
 
         v_input = (int)ac_voltage_rms(ADC_SOC_NUMBER2);
         v_input = v_input * ip_c / 100;
@@ -818,12 +814,9 @@ void Control_Task(void *pvParameters) {
   for (;;) {
     v_out = (int)(ac_voltage_rms(ADC_SOC_NUMBER0));
     v_out = v_out * op_c / 100;
-    // uartPrintf("op = %d\n",ip_c);
+    //uartPrintf("op = %d,%d\n",(int)calculate_in_real_power(),(int)calculate_real_power());
 
     cur = ac_current_rms();
-    power = calculate_real_power();
-    power_in = calculate_in_real_power();
-    Efff = power/power_in;
     cur = cur * oa_c / 100;
     // int fre = (int)(measureFrequency(V_ZC));
     if (v_out < 100 || v_out > 1000)
@@ -838,6 +831,10 @@ void Control_Task(void *pvParameters) {
     gData.contactor_v = contactor_voltage;
     gData.motor_current = motor_cur;
     gData.earth_voltage = v_earth;
+    gData.temp_r2_resistance = temp_r2;
+    gData.out_power = output_power;
+    gData.in_power = input_power;
+    gData.input_current = in_cur;
     xSemaphoreGive(dataMutex);
     // v_out = (int)((0.9857f * (v_out)) - 18.67f);
     xSemaphoreTake(parameter_mutex, portMAX_DELAY);
@@ -852,7 +849,7 @@ void Control_Task(void *pvParameters) {
     xSemaphoreGive(parameter_mutex);
 
     //suartPrintf("v_earth= %d\n",output_regulation);  // 78 v earth   0.2888
-    uartPrintf("output power = %d , Input power = %d, Eff = %d.%d\n",(int)power,(int)power_in,(int)Efff, (int)((Efff - (int)Efff) * 10));
+    // uartPrintf("cur = %d\n",motor_cur);
     //  uartPrintf("cur = %d\n",cur);
     // uartPrintf("reg = %d\n",output_regulation);
     error = v_out - target;
@@ -911,7 +908,26 @@ void Control_Task(void *pvParameters) {
         //motor_cur = (int)ac_current_motor();
         ++flag;
       }
-
+     else if (flag == 4) {
+       output_power =(int)calculate_real_power();
+       uartPrintf("OP = %d\n",output_power);
+       if(output_power < 0) output_power*(-1);
+        ++flag;
+      }
+      else if (flag == 5) {
+      input_power = (int)calculate_in_real_power();
+      uartPrintf("IP = %d\n",input_power);
+      if(input_power < 0) input_power*(-1);
+        ++flag;
+      }
+      else if (flag == 6) {
+        temp_r2 = temp_resistance();
+        ++flag;
+      }
+      else if (flag == 7) {
+        in_cur = ac_input_current();
+       flag = 0;
+      }
       else {
         flag = 0;
       }
@@ -1099,6 +1115,14 @@ void edit_data_store(int new_interger_data, float new_floater_data) {
         (uint8_t)(((float)(new_interger_data/10.0) * store_data.current_calibration / c));
     break;
 
+    case TEMP_RESISTANCE:
+    store_data.temp_r2_limit = new_interger_data;
+    break;
+
+    case TEMP_ONOFF:
+    store_data.temp_onoff = new_floater_data;
+    break;
+
   default:
     return;
   }
@@ -1122,7 +1146,7 @@ void UI_Task(void *pvParameters) {
 
   //--gama------
   int earth_vol, t_start = 5, f, parameter_pre_temp = 4, hlt_timer = 0,
-                 contactor_vol = 0, motor_c = 0,log_temp=0,log_couter=0;
+                 contactor_vol = 0, motor_c = 0,log_temp=0,log_couter=0,in_power_ui=0,out_power_ui=0,temp_r2_lmit_ui=0;
   uint8_t edit_count = 0,contactor_voltage_count=0;
   bool edit_screen = 0, blink_flag = 0,ovl_flag=0;
 
@@ -1137,6 +1161,10 @@ void UI_Task(void *pvParameters) {
     contactor_vol = gData.contactor_v;
     motor_c = gData.motor_current;
     earth_vol = gData.earth_voltage;
+    temp_r2_lmit_ui = gData.temp_r2_resistance;
+    in_power_ui = gData.in_power;
+    out_power_ui = gData.out_power;
+    in_power_ui = gData.input_current;
     xSemaphoreGive(dataMutex);
 
     xSemaphoreTake(parameter_mutex, portMAX_DELAY);
@@ -1152,12 +1180,12 @@ void UI_Task(void *pvParameters) {
     if (c < 0.7) {
       c = 0;
     }
-
+/*
     if (GPIO_readPin(242) == 1) {
-      //edit_screen = 0;    // comment for home button
-      //display_state = NORMAL;
+      edit_screen = 0;
+      display_state = NORMAL;
     }
-
+*/
     if(start_flag == 1) {
     ++contactor_voltage_count;
     }
@@ -1240,6 +1268,9 @@ void UI_Task(void *pvParameters) {
        break;
         case 9:
        lcd_printf("MOTOR FAILED");
+       break;
+       case 10:
+       lcd_printf("TEMPRATURE HIGH");
        break;
       }
 
@@ -1474,11 +1505,45 @@ void UI_Task(void *pvParameters) {
       if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
         root_state = CALIBRATION;
-        upper_state = EXIT;
-        next_state = REGULATION;
+        upper_state = TEMP_ONOFF;
         pre_state = display_state;
         onoff_temp = store_data.motor_fault_onoff;
         display_state = EDIT_ONOFF;
+      }
+      break;
+
+      case TEMP_ONOFF:
+      lcd_printf("TEMP FAULT: ");
+      lcd_printf(getonoff(store_data.temp_onoff));
+      lcd_setCursor(0, 1);
+      //lcd_printf("<-- EDIT:P11 -->");
+      
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
+        edit_screen = 1;
+        root_state = CALIBRATION;
+        upper_state = TEMP_RESISTANCE;
+        next_state = REGULATION;
+        pre_state = display_state;
+        onoff_temp = store_data.temp_onoff;
+        display_state = EDIT_ONOFF;
+      }
+      break;
+
+      case TEMP_RESISTANCE:
+      lcd_printf("TEMP RES(K): ");
+      lcd_printf("%4d", store_data.temp_r2_limit);
+      lcd_setCursor(0, 1);
+      //lcd_printf("<-- EDIT:P09 -->");
+    
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
+        edit_screen = 1;
+        root_state = CALIBRATION;
+        upper_state = EXIT;
+        next_state = REGULATION;
+        pre_state = display_state;
+        set_number(store_data.temp_r2_limit);
+        set_min_max(0,100);
+        display_state = EDIT;
       }
       break;
 
@@ -1618,15 +1683,29 @@ void UI_Task(void *pvParameters) {
       
       if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
-        next_state = SET_VOLTAGE;
-        root_state = FACT_SETTING;
+        //next_state = SET_VOLTAGE;
+        //root_state = FACT_SETTING;
         pre_state = display_state;
-        upper_state = EXIT;
+        upper_state = TEST_PARAMETER;
         set_number(store_data.hi_lo_time_s);
         set_min_max(10,20);
         display_state = EDIT;
       }
       break;
+
+      case TEST_PARAMETER:
+      lcd_clear();
+      lcd_printf("IP=%dW OP=%d",in_power_ui,out_power_ui);
+      //lcd_setCursor(0, 1);
+      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+        next_state = SET_VOLTAGE;
+        root_state = FACT_SETTING;
+        pre_state = display_state;
+        upper_state = EXIT;
+        display_state = EXIT;
+      }
+      break;
+
 
     case IP_CALIBRATION:
       lcd_printf("IP CALIBRATION: ");
@@ -1681,7 +1760,6 @@ void UI_Task(void *pvParameters) {
       //lcd_printf("<-- EDIT:P03 -->");
       if (GPIO_readPin(HOME) == 1 && home_flag == 0) {
         edit_screen = 0;
-        
         display_state = root_state;
       }
       if (GPIO_readPin(SET) == 1 && set_flag == 0) {
@@ -1762,7 +1840,7 @@ void UI_Task(void *pvParameters) {
     if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
       down_flag = 1;
     }
-    if(GPIO_readPin(HOME) == 1 && home_flag == 0) {
+if(GPIO_readPin(HOME) == 1 && home_flag == 0) {
       home_flag = 1;
     }
     if (GPIO_readPin(UP) == 1) {
@@ -1812,11 +1890,9 @@ void UI_Task(void *pvParameters) {
     if (GPIO_readPin(SET) == 0) {
       set_flag = 0;
     }
-    if (GPIO_readPin(HOME) == 0) {
+if (GPIO_readPin(HOME) == 0) {
       home_flag = 0;
     }
-
-
     if (display_state != NORMAL && display_state != DEF) {
       ++menu_counter;
       if (menu_counter > 105) {
@@ -1902,7 +1978,7 @@ void UI_Task(void *pvParameters) {
         buzer_state = 1;
       }
     }
-/*
+
     else if (relay_flag == 1 && contactor_vol < 120 &&
              v_in > 150 && store_data.contactor_fail_onoff && contactor_voltage_count > 20 && contactor_state == 0) {
       display_error = 6;
@@ -1971,8 +2047,19 @@ else if (c >  ((store_data.ovld_imd_current + (store_data.upper_imd_current <<8 
       }
 
     }
-*/
-    
+
+    else if (store_data.temp_onoff && ((temp_r2_lmit_ui * 100) < (store_data.temp_r2_limit * 100))) {
+    display_error = 9;
+      ++hlt_timer;
+      if (hlt_timer > (5 * 5)) {
+        relay_flag = 0;
+        logs[total_logs] = 10;
+         ++total_logs;
+        buzer_off();
+      } else {
+        buzer_state = 1;
+      }
+    }
 
     else {
 
@@ -2050,6 +2137,9 @@ else if (c >  ((store_data.ovld_imd_current + (store_data.upper_imd_current <<8 
           break;
         case 8:
           lcd_printf("   EARTH HIGH   ");
+          break;
+          case 9:
+          lcd_printf("TEMPRATURE HIGH");
           break;
         }
       }
