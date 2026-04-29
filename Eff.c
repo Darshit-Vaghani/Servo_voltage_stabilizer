@@ -46,10 +46,10 @@ uint32_t ControlAddr;
 #define C_ZC 7
 #define ZC_TIMEOUT 10000 // adjust based on CPU speed
 
-#define UP 12
-#define DOWN 230
-#define HOME 242
-#define SET 224
+#define UP 12  //as UP
+#define DOWN 230 // as DOWN
+#define HOME 242 // as enter
+#define SET 224 // as mode or menu
 
 #define HI_LO_LED 227
 #define OV_LD_LED 28
@@ -70,7 +70,7 @@ bool onoff_temp = 0, buzer_state = 0, start_flag = 0, relay_flag = 0,
 uint64_t time = 0;
 unsigned int buzer_count = 0, temp_count = 0,max=1000,min=0;
 uint8_t display_error = 0,total_logs=0;
-bool up_flag = 0, down_flag = 0, set_flag = 0;
+bool up_flag = 0, down_flag = 0, set_flag = 0,home_flag=0;
 unsigned int up_counter = 0, down_counter = 0, set_counter = 0,
              menu_counter = 0, up_delay_counter = 0, down_delay_counter = 0,error_counter=0,ip_high_log=0,op_high_log=0,op_low_log=0,ip_low_log=0;
 
@@ -115,11 +115,15 @@ typedef enum {
   CALIBRATION_PASSWORD,
   DEF,
   SHOW_LOGS,
-  HOME_UI
+  HOME_UI,
+  EXIT
 } UI_state;
 
 UI_state pre_state = NORMAL;
+UI_state root_state = NORMAL;
+UI_state upper_state = NORMAL;
 UI_state display_state = DEF;
+UI_state next_state = NORMAL;
 //----------------------------------------------------------------------------------------------------
 
 //---------------------Parameter Range define---------------------------------------
@@ -425,7 +429,7 @@ void initADCA0(void) {
   // ADC_setupSOC(ADCA_BASE, ADC_SOC_NUMBER7, ADC_TRIGGER_SW_ONLY,
   // ADC_CH_ADCIN7, 80);
   ADC_setupSOC(ADCA_BASE, ADC_SOC_NUMBER1, ADC_TRIGGER_SW_ONLY, ADC_CH_ADCIN11,
-               80);
+               80);//80
   ADC_setupSOC(ADCA_BASE, ADC_SOC_NUMBER4, ADC_TRIGGER_SW_ONLY, ADC_CH_ADCIN7,
                15);
   ADC_setupSOC(ADCA_BASE, ADC_SOC_NUMBER3, ADC_TRIGGER_SW_ONLY, ADC_CH_ADCIN0,
@@ -433,7 +437,7 @@ void initADCA0(void) {
   ADC_setupSOC(ADCA_BASE, ADC_SOC_NUMBER2, ADC_TRIGGER_SW_ONLY, ADC_CH_ADCIN4,
                15);
   ADC_setupSOC(ADCA_BASE, ADC_SOC_NUMBER5, ADC_TRIGGER_SW_ONLY, ADC_CH_ADCIN5,
-               80);
+               80);//80
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -584,10 +588,10 @@ float calculate_real_power(void) {
 
     waitForZeroCross(V_ZC); // sync with voltage
     int i;
-    for (i = 0; i < 2580; i++) {
+    for (i = 0; i < 860; i++) {
 
         // Read voltage
-        uint16_t v_adc = readADCA0_oversampled(ADC_SOC_NUMBER0);
+        uint16_t v_adc = readADCA0_oversampled_for_power(ADC_SOC_NUMBER0);
         float v = ((float)v_adc * ADC_REF_VOLT) / ADC_MAX;
         v -= ADC_OFFSET;
         v /= GAIN_FACTOR;
@@ -601,7 +605,7 @@ float calculate_real_power(void) {
         power_sum += (v * i_val);
     }
 
-    return power_sum /2580;
+    return power_sum /860;
 }
 
 //-----------------------------------
@@ -613,10 +617,10 @@ float calculate_in_real_power(void) {
 
     waitForZeroCross(V_ZC); // sync with voltage
     int i;
-    for (i = 0; i < 2580; i++) {
+    for (i = 0; i < 860; i++) {
 
         // Read voltage
-        uint16_t v_adc = readADCA0_oversampled(ADC_SOC_NUMBER2);
+        uint16_t v_adc = readADCA0_oversampled_for_power(ADC_SOC_NUMBER2);
         float v = ((float)v_adc * ADC_REF_VOLT) / ADC_MAX;
         v -= ADC_OFFSET;
         v /= GAIN_FACTOR;
@@ -630,7 +634,7 @@ float calculate_in_real_power(void) {
         power_sum += (v * i_val);
     }
 
-    return power_sum /2580;
+    return power_sum /860;
 }
 
 //-----------------------------------
@@ -805,7 +809,7 @@ void Control_Task(void *pvParameters) {
   uint8_t output_regulation = 3, flag = 0, ip_c = 100, op_c = 100, oa_c = 100;
   bool mode_auto_onoff = 1,error_flag=0;
   int v_input = 0, contactor_voltage = 0, v_earth = 0, v_out = 0, motor_cur = 0;
-  float cur,power,power_in;
+  float cur,power,power_in,Efff=0;
 
         v_input = (int)ac_voltage_rms(ADC_SOC_NUMBER2);
         v_input = v_input * ip_c / 100;
@@ -819,6 +823,7 @@ void Control_Task(void *pvParameters) {
     cur = ac_current_rms();
     power = calculate_real_power();
     power_in = calculate_in_real_power();
+    Efff = power/power_in;
     cur = cur * oa_c / 100;
     // int fre = (int)(measureFrequency(V_ZC));
     if (v_out < 100 || v_out > 1000)
@@ -847,7 +852,7 @@ void Control_Task(void *pvParameters) {
     xSemaphoreGive(parameter_mutex);
 
     //suartPrintf("v_earth= %d\n",output_regulation);  // 78 v earth   0.2888
-    uartPrintf("output power = %d , Input power = %d\n",(int)power,(int)power_in);
+    uartPrintf("output power = %d , Input power = %d, Eff = %d.%d\n",(int)power,(int)power_in,(int)Efff, (int)((Efff - (int)Efff) * 10));
     //  uartPrintf("cur = %d\n",cur);
     // uartPrintf("reg = %d\n",output_regulation);
     error = v_out - target;
@@ -1149,8 +1154,8 @@ void UI_Task(void *pvParameters) {
     }
 
     if (GPIO_readPin(242) == 1) {
-      edit_screen = 0;
-      display_state = NORMAL;
+      //edit_screen = 0;    // comment for home button
+      //display_state = NORMAL;
     }
 
     if(start_flag == 1) {
@@ -1189,13 +1194,10 @@ void UI_Task(void *pvParameters) {
       lcd_printf("TRIP LOG:");
       lcd_setCursor(0, 1);
       lcd_printf("<--   M:01   -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
+      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
         display_state = MANUAL_MODE;
       }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = CALIBRATION;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      if (GPIO_readPin(HOME) == 1 && home_flag == 0) {
         pre_state = display_state;
         log_couter = 0;
         display_state = SHOW_LOGS;
@@ -1256,15 +1258,10 @@ void UI_Task(void *pvParameters) {
       lcd_printf("AUTO MODE: ");
       lcd_printf(getonoff(store_data.Mode));
       lcd_setCursor(0, 1);
-      lcd_printf("<--   M:02   -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = SETTING;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = TRIP_LOGS;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+       //lcd_printf("<--   M:02   -->");
+      if (GPIO_readPin(HOME) == 1 && set_flag == 0 || 1) {
         pre_state = display_state;
+        upper_state = SETTING;
         onoff_temp = store_data.Mode;
         display_state = EDIT_ONOFF;
         edit_screen = 1;
@@ -1274,15 +1271,10 @@ void UI_Task(void *pvParameters) {
     case SETTING:
       lcd_printf("SETTING :");
       lcd_setCursor(0, 1);
-      lcd_printf("<--   M:03   -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = FACT_SETTING;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = MANUAL_MODE;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<--   M:03   -->");
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        upper_state = FACT_SETTING;
         set_min_max(0,1000);
         display_state = SETTING_PASSWORD;
       }
@@ -1291,15 +1283,11 @@ void UI_Task(void *pvParameters) {
     case FACT_SETTING:
       lcd_printf("FACT SETTING:");
       lcd_setCursor(0, 1);
-      lcd_printf("<--   M:04   -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = CALIBRATION;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = SETTING;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<--   M:04   -->");
+      
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        upper_state = CALIBRATION;
         set_min_max(0,1000);
         display_state = FACT_PASSWORD;
       }
@@ -1308,15 +1296,10 @@ void UI_Task(void *pvParameters) {
     case CALIBRATION:
       lcd_printf("CALIBRATION:");
       lcd_setCursor(0, 1);
-      lcd_printf("<--   M:05   -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = TRIP_LOGS;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = FACT_SETTING;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<--   M:05   -->");
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        upper_state = NORMAL;
         set_min_max(0,1000);
         display_state = CALIBRATION_PASSWORD;
       }
@@ -1326,16 +1309,11 @@ void UI_Task(void *pvParameters) {
       lcd_printf("REGULATION: ");
       lcd_printf("%4d", store_data.regulation_voltage);
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P01 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = OP_CURRENT;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = MOTOR_FAULT;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P01 -->");
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
         pre_state = display_state;
+        upper_state = OP_CURRENT;
         set_number(store_data.regulation_voltage);
         edit_count = 3;
         set_min_max(MIN_REG,MAX_REG);
@@ -1347,15 +1325,10 @@ void UI_Task(void *pvParameters) {
       lcd_printf("OP CURRENT: ");
       lcd_printf(getonoff(1));
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P02 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = OVERLOAD;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = REGULATION;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+     //lcd_printf("<-- EDIT:P02 -->");
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        upper_state = OVERLOAD;
         pre_state = display_state;
         onoff_temp = store_data.op_current;
         display_state = EDIT_ONOFF;
@@ -1369,16 +1342,12 @@ void UI_Task(void *pvParameters) {
       //lcd_printf("%4d", (store_data.ovld_imd_current + (store_data.upper_imd_current <<8 )));
       lcd_printf("%d.%d",current_temp / 10, current_temp % 10);
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P03 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = OVLD_TIME;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = OP_CURRENT;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P03 -->");
+      
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
         pre_state = display_state;
+        upper_state = OVLD_TIME;
         set_number(store_data.overload_current);
         set_min_max(MIN_OL1,MAX_OL1);
         display_state = EDIT;
@@ -1389,15 +1358,11 @@ void UI_Task(void *pvParameters) {
       lcd_printf("OVLD TIME:");
       lcd_printf("%4d", store_data.ovld_time_s);
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P04 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = OVLD_IMD;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = OVERLOAD;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P04 -->");
+      
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        upper_state = OVLD_IMD;
         pre_state = display_state;
         set_number(store_data.ovld_time_s);
         set_min_max(MIN_OL1_TIME,MAX_OL1_TIME);
@@ -1413,15 +1378,11 @@ void UI_Task(void *pvParameters) {
       lcd_printf("%d.%d",current_temp / 10, current_temp % 10);
      // lcd_printf("%4d", store_data.ovld_imd_current);
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P05 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = OVLD_RESET;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = OVLD_TIME;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P05 -->");
+      
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        upper_state = OVLD_RESET;
         pre_state = display_state;
         set_number(store_data.ovld_imd_current);
         set_min_max(50,2000);
@@ -1432,15 +1393,11 @@ void UI_Task(void *pvParameters) {
     case OVLD_RESET:
       lcd_printf("OVLD RESET AUTO: ");
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P06 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = CONTACTOR_FAIL;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = OVLD_IMD;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P06 -->");
+      
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        upper_state = CONTACTOR_FAIL;
         pre_state = display_state;
         onoff_temp = store_data.ovld_reset_onoff;
         display_state = EDIT_ONOFF;
@@ -1451,15 +1408,11 @@ void UI_Task(void *pvParameters) {
       lcd_printf("CONTACTOR FAIL: ");
       lcd_printf(getonoff(store_data.contactor_fail_onoff));
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P07 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = EARTH_FAIL;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = OVLD_RESET;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P07 -->");
+      
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        upper_state = EARTH_FAIL;
         pre_state = display_state;
         onoff_temp = store_data.contactor_fail_onoff;
         display_state = EDIT_ONOFF;
@@ -1470,15 +1423,11 @@ void UI_Task(void *pvParameters) {
       lcd_printf("EARTH FAIL: ");
       lcd_printf(getonoff(store_data.earth_fail_onoff));
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P08 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = EARTH_HIGH;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = CONTACTOR_FAIL;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P08 -->");
+      
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        upper_state = EARTH_HIGH;
         pre_state = display_state;
         onoff_temp = store_data.earth_fail_onoff;
         display_state = EDIT_ONOFF;
@@ -1489,15 +1438,11 @@ void UI_Task(void *pvParameters) {
       lcd_printf("EARTH HIGH: ");
       lcd_printf("%4d", store_data.earth_high_voltage);
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P09 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = EPOINT;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = EARTH_FAIL;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P09 -->");
+    
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        upper_state = EPOINT;
         pre_state = display_state;
         set_number(store_data.earth_high_voltage);
         set_min_max(5,50);
@@ -1509,15 +1454,11 @@ void UI_Task(void *pvParameters) {
       lcd_printf("EPOINT FAIL:");
       lcd_printf(getonoff(store_data.epoint_fail));
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P10 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = MOTOR_FAULT;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = EARTH_HIGH;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P10 -->");
+     
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        upper_state = MOTOR_FAULT;
         pre_state = display_state;
         onoff_temp = store_data.epoint_fail;
         display_state = EDIT_ONOFF;
@@ -1528,15 +1469,13 @@ void UI_Task(void *pvParameters) {
       lcd_printf("MOTOR FAULT: ");
       lcd_printf(getonoff(store_data.motor_fault_onoff));
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P11 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = REGULATION;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = EPOINT;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P11 -->");
+      
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        root_state = CALIBRATION;
+        upper_state = EXIT;
+        next_state = REGULATION;
         pre_state = display_state;
         onoff_temp = store_data.motor_fault_onoff;
         display_state = EDIT_ONOFF;
@@ -1572,16 +1511,12 @@ void UI_Task(void *pvParameters) {
       lcd_printf("%3d", store_data.target_output_voltage +
                             store_data.upper_target_voltage);
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P01 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = ON_DELAY;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = HI_LO_TIME;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P01 -->");
+      
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
         pre_state = display_state;
+        upper_state = ON_DELAY;
         set_number(store_data.target_output_voltage +
                    store_data.upper_target_voltage);
           set_min_max(MIN_TARGET_VOLTAGE,MAX_TARGET_VOLTAGE);
@@ -1593,15 +1528,11 @@ void UI_Task(void *pvParameters) {
       lcd_printf("ON DELAY: ");
       lcd_printf("%4d", store_data.ondelay_s);
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P02 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = IP_LOW;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = SET_VOLTAGE;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P02 -->");
+      
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        upper_state = IP_LOW;
         pre_state = display_state;
         set_number(store_data.ondelay_s);
         set_min_max(MIN_ON_DELAY,MAX_ON_DELAY);
@@ -1614,15 +1545,11 @@ void UI_Task(void *pvParameters) {
       lcd_printf("%4d",
                  store_data.ip_low_voltage + store_data.upper_ip_low_voltage);
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P03 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = IP_HIGH;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = ON_DELAY;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P03 -->");
+      
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        upper_state = IP_HIGH;
         pre_state = display_state;
         set_number(store_data.ip_low_voltage + store_data.upper_ip_low_voltage);
         set_min_max(MIN_INPUT_LOW,(store_data.target_output_voltage + store_data.upper_target_voltage)-MAX_INPUT_LOW);
@@ -1635,16 +1562,12 @@ void UI_Task(void *pvParameters) {
       lcd_printf("%4d",
                  store_data.ip_high_voltage + store_data.upper_ip_high_voltage);
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P04 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = OP_LOW;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = IP_LOW;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P04 -->");
+     
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
         pre_state = display_state;
+        upper_state = OP_LOW;
         set_number(store_data.ip_high_voltage +
                    store_data.upper_ip_high_voltage);
                    set_min_max(MIN_INPUT_HIGH + (store_data.target_output_voltage + store_data.upper_target_voltage),MAX_INPUT_HIGH);
@@ -1657,16 +1580,12 @@ void UI_Task(void *pvParameters) {
       lcd_printf("%4d",
                  store_data.op_low_voltage + store_data.upper_op_low_voltage);
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P05 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = OP_HIGH;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = IP_HIGH;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+     // lcd_printf("<-- EDIT:P05 -->");
+     
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
         pre_state = display_state;
+        upper_state = OP_HIGH;
         set_number(store_data.op_low_voltage + store_data.upper_op_low_voltage);
         set_min_max(MIN_OUTPUT_LOW,(store_data.target_output_voltage + store_data.upper_target_voltage)-MAX_OUTPUT_LOW);
         display_state = EDIT;
@@ -1678,15 +1597,11 @@ void UI_Task(void *pvParameters) {
       lcd_printf("%4d",
                  store_data.op_high_voltage + store_data.upper_op_high_voltage);
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P06 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = HI_LO_TIME;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = OP_LOW;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P06 -->");
+      
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        upper_state = HI_LO_TIME;
         pre_state = display_state;
         set_number(store_data.op_high_voltage +
                    store_data.upper_op_high_voltage);
@@ -1699,16 +1614,14 @@ void UI_Task(void *pvParameters) {
       lcd_printf("HI-LO TIME: ");
       lcd_printf("%3d", store_data.hi_lo_time_s);
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P07 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = SET_VOLTAGE;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = OP_HIGH;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+     // lcd_printf("<-- EDIT:P07 -->");
+      
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        next_state = SET_VOLTAGE;
+        root_state = FACT_SETTING;
         pre_state = display_state;
+        upper_state = EXIT;
         set_number(store_data.hi_lo_time_s);
         set_min_max(10,20);
         display_state = EDIT;
@@ -1718,16 +1631,12 @@ void UI_Task(void *pvParameters) {
     case IP_CALIBRATION:
       lcd_printf("IP CALIBRATION: ");
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P01 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = OP_CALIBRATION;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = OA_CALIBRATION;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P01 -->");
+      
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
         pre_state = display_state;
+        upper_state = OP_CALIBRATION;
         set_number(v_in);
         set_min_max(1,300);
         display_state = EDIT;
@@ -1737,15 +1646,11 @@ void UI_Task(void *pvParameters) {
     case OP_CALIBRATION:
       lcd_printf("OP CALIBRATION: ");
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P02 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = OA_CALIBRATION;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = IP_CALIBRATION;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P02 -->");
+      
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        upper_state = OA_CALIBRATION;
         pre_state = display_state;
         set_number(v_o);
         set_min_max(1,300);
@@ -1756,21 +1661,34 @@ void UI_Task(void *pvParameters) {
     case OA_CALIBRATION:
       lcd_printf("OA CALIBRATION: ");
       lcd_setCursor(0, 1);
-      lcd_printf("<-- EDIT:P03 -->");
-      if (GPIO_readPin(UP) == 1 && up_flag == 0) {
-        display_state = IP_CALIBRATION;
-      }
-      if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
-        display_state = OP_CALIBRATION;
-      }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      //lcd_printf("<-- EDIT:P03 -->");
+     
+      if (GPIO_readPin(SET) == 1 && set_flag == 0 || 1) {
         edit_screen = 1;
+        upper_state = EXIT;
+        next_state = IP_CALIBRATION;
+        root_state = TRIP_LOGS;
         pre_state = display_state;
         set_number((int)c);
         set_min_max(1,2000);
         display_state = EDIT;
       }
       break;
+
+    case EXIT:
+        lcd_printf("<---EXIT--->: ");
+      lcd_setCursor(0, 1);
+      //lcd_printf("<-- EDIT:P03 -->");
+      if (GPIO_readPin(HOME) == 1 && home_flag == 0) {
+        edit_screen = 0;
+        
+        display_state = root_state;
+      }
+      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+        edit_screen = 0;
+         display_state = next_state;
+      }
+    break;
 
     case EDIT:
       lcd_setCursor(0, 1);
@@ -1783,7 +1701,7 @@ void UI_Task(void *pvParameters) {
      }
      
 
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      if (GPIO_readPin(HOME) == 1 && home_flag == 0) {
 
         edit_screen = 0;
 
@@ -1811,6 +1729,10 @@ void UI_Task(void *pvParameters) {
           display_state = pre_state;
         }
       }
+      if(GPIO_readPin(SET) == 1 && set_flag == 0) {
+         edit_screen = 0;
+         display_state = upper_state;
+      }
       break;
 
     case EDIT_ONOFF:
@@ -1821,11 +1743,15 @@ void UI_Task(void *pvParameters) {
           GPIO_readPin(UP) == 1 && up_flag == 0) {
         onoff_temp = !onoff_temp;
       }
-      if (GPIO_readPin(SET) == 1 && set_flag == 0) {
+      if (GPIO_readPin(HOME) == 1 && home_flag == 0) {
         edit_screen = 0;
         edit_data_store(onoff_temp, 0);
         save_parameters(&store_data, EEPROM_START_ADDR);
         display_state = pre_state;
+      }
+      if(GPIO_readPin(SET) == 1 && set_flag == 0) {
+        edit_screen = 0;
+        display_state = upper_state;
       }
       break;
     }
@@ -1836,7 +1762,9 @@ void UI_Task(void *pvParameters) {
     if (GPIO_readPin(DOWN) == 1 && down_flag == 0) {
       down_flag = 1;
     }
-
+    if(GPIO_readPin(HOME) == 1 && home_flag == 0) {
+      home_flag = 1;
+    }
     if (GPIO_readPin(UP) == 1) {
       ++up_delay_counter;
       ++up_counter;
@@ -1884,6 +1812,10 @@ void UI_Task(void *pvParameters) {
     if (GPIO_readPin(SET) == 0) {
       set_flag = 0;
     }
+    if (GPIO_readPin(HOME) == 0) {
+      home_flag = 0;
+    }
+
 
     if (display_state != NORMAL && display_state != DEF) {
       ++menu_counter;
@@ -1970,7 +1902,7 @@ void UI_Task(void *pvParameters) {
         buzer_state = 1;
       }
     }
-
+/*
     else if (relay_flag == 1 && contactor_vol < 120 &&
              v_in > 150 && store_data.contactor_fail_onoff && contactor_voltage_count > 20 && contactor_state == 0) {
       display_error = 6;
@@ -2039,7 +1971,7 @@ else if (c >  ((store_data.ovld_imd_current + (store_data.upper_imd_current <<8 
       }
 
     }
-
+*/
     
 
     else {
